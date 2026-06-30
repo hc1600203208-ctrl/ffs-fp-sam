@@ -1,0 +1,36 @@
+foundationpose_file_mask_tracker_node:
+  ros__parameters:
+    refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp16_5060.engine
+    scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp16_5060.engine
+    mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
+    object_name: blue carton
+
+    rgb_topic: /left/image_raw
+    depth_topic: /depth_image
+
+    # Either set mask_image_path directly, or set mask_image_directory + mask_image_name.
+    mask_image_path: ""
+    mask_image_directory: /home/hc/weizi/Grounded-Segment-Anything/ros2_outputs/first_mask
+    mask_image_name: first_mask.png
+
+    pose_topic: /foundationpose/pose
+    pose_frame_id: camera_color_optical_frame
+    visualization_topic: /foundationpose/visualization
+    visualization_window_name: foundationpose_visualization
+
+    fx: 736.0934
+    fy: 736.6856
+    cx: 989.8375
+    cy: 551.6085
+
+    depth_scale: 0.001
+    max_input_image_height: 1080
+    max_input_image_width: 1920
+    register_refine_iterations: 5
+    track_refine_iterations: 2
+    sync_queue_size: 5
+    max_sync_interval_sec: 0.025
+    mask_poll_interval_ms: 200
+    resize_mask_to_input: false
+    publish_visualization: true
+    show_visualization_window: true

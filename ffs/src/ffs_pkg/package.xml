@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fast_foundation_stereo</name>
+  <version>1.0.0</version>
+  <description>fast_foundation_stereo</description>
+  <maintainer email="zhanghao.py@gmail.com">Howard Zhang</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>cv_bridge</depend>
+  <depend>depth_image_proc</depend>
+  <depend>image_geometry</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+  <depend>image_transport</depend>
+  <depend>image_proc</depend>
+  <depend>message_filters</depend>
+  <depend>pcl_conversions</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_eigen</depend>
+  <depend>tf2_ros</depend>
+
+  
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

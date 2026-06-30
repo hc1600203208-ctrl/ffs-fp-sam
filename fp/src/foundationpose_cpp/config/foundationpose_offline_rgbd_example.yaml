@@ -1,0 +1,152 @@
+# foundationpose_offline_rgbd_node:
+#   ros__parameters:
+#     refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp16_5060.engine
+#     scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp16_5060.engine
+#     mesh_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/mustard0/mesh/textured_simple.obj
+#     object_name: mustard
+
+#     sequence_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/mustard0
+#     rgb_subdir: rgb
+#     depth_subdir: depth
+#     masks_subdir: masks
+#     initial_frame_id: "1581120424100262102"
+#     initial_mask_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/mustard0/masks/1581120424100262102.png
+#     camera_info_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/mustard0/cam_K.txt
+
+#     pose_topic: /foundationpose/offline_pose
+#     pose_frame_id: camera_color_optical_frame
+#     visualization_topic: /foundationpose/offline_visualization
+
+#     output_pose_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/mustard0/offline_result/poses.csv
+#     visualization_output_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/mustard0/offline_result/visualizations
+#     video_output_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/mustard0/offline_result/track.mp4
+
+#     depth_scale: 0.001
+#     video_fps: 30.0
+#     max_input_image_height: 1080
+#     max_input_image_width: 1920
+#     register_refine_iterations: 5
+#     track_refine_iterations: 2
+#     visualization_wait_key_ms: 1
+
+#     resize_mask_to_input: false
+#     publish_pose: true
+#     publish_visualization: true
+#     save_visualizations: true
+#     show_visualization_window: false
+#     shutdown_when_done: true
+
+# foundationpose_offline_rgbd_node:
+#   ros__parameters:
+#     refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp16_5060.engine
+#     scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp16_5060.engine
+#     mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
+#     object_name: mustard
+
+#     sequence_dir: /home/hc/weizi/dataset/jrnew-blue
+#     rgb_subdir: rgb
+#     depth_subdir: depth_raw
+#     masks_subdir: masks
+#     initial_frame_id: "0000"
+#     initial_mask_path: /home/hc/weizi/dataset/jrnew-blue/masks/0000.png
+#     camera_info_path: /home/hc/weizi/dataset/jrnew-blue/cam_K.txt
+
+#     pose_topic: /foundationpose/offline_pose
+#     pose_frame_id: camera_color_optical_frame
+#     visualization_topic: /foundationpose/offline_visualization
+
+#     output_pose_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/poses.csv
+#     visualization_output_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/visualizations
+#     video_output_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/track.mp4
+
+#     depth_scale: 0.001
+#     video_fps: 30.0
+#     max_input_image_height: 1080
+#     max_input_image_width: 1920
+#     register_refine_iterations: 5
+#     track_refine_iterations: 2
+#     visualization_wait_key_ms: 1
+
+#     resize_mask_to_input: false
+#     publish_pose: true
+#     publish_visualization: true
+#     save_visualizations: true
+#     show_visualization_window: false
+#     shutdown_when_done: true
+
+# foundationpose_offline_rgbd_node:
+#   ros__parameters:
+#     refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp16_5060.engine
+#     scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp16_5060.engine
+#     mesh_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrblue8+1/mesh/textured_mesh.obj
+#     object_name: mustard
+
+#     sequence_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrblue8+1  
+#     rgb_subdir: rgb
+#     depth_subdir: depth
+#     masks_subdir: masks
+#     initial_frame_id: "0000"
+#     initial_mask_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrblue8+1/masks/0000.png
+#     camera_info_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrblue8+1/cam_K.txt
+
+#     pose_topic: /foundationpose/offline_pose
+#     pose_frame_id: camera_color_optical_frame
+#     visualization_topic: /foundationpose/offline_visualization
+
+#     output_pose_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrblue8+1/offline_result/poses.csv
+#     visualization_output_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrblue8+1/offline_result/visualizations
+#     video_output_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrblue8+1/offline_result/track.mp4
+
+#     depth_scale: 0.001
+#     video_fps: 30.0
+#     max_input_image_height: 1080
+#     max_input_image_width: 1920
+#     register_refine_iterations: 5
+#     track_refine_iterations: 2
+#     visualization_wait_key_ms: 1
+
+#     resize_mask_to_input: false
+#     publish_pose: true
+#     publish_visualization: true
+#     save_visualizations: true
+#     show_visualization_window: false
+#     shutdown_when_done: true
+
+foundationpose_offline_rgbd_node:
+  ros__parameters:
+    refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp16_5060.engine
+    scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp16_5060.engine
+    mesh_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/mesh/textured_mesh.obj
+    object_name: mustard
+
+    sequence_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden  
+    rgb_subdir: rgb
+    depth_subdir: depth
+    masks_subdir: masks
+    initial_frame_id: "0000"
+    initial_mask_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/masks/0000.png
+    camera_info_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/cam_K.txt
+
+    pose_topic: /foundationpose/offline_pose
+    pose_frame_id: camera_color_optical_frame
+    visualization_topic: /foundationpose/offline_visualization
+
+    output_pose_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/poses.csv
+    visualization_output_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/visualizations
+    video_output_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/track.mp4
+
+    depth_scale: 0.001
+    video_fps: 30.0
+    max_input_image_height: 1080
+    max_input_image_width: 1920
+    register_refine_iterations: 5
+    track_refine_iterations: 2
+    visualization_wait_key_ms: 1
+
+    resize_mask_to_input: false
+    publish_pose: true
+    publish_visualization: true
+    save_visualizations: true
+    show_visualization_window: false
+    shutdown_when_done: true
+
