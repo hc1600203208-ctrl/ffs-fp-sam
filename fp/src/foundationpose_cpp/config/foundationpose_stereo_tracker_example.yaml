@@ -43,3 +43,19 @@ foundationpose_stereo_tracker_node:
     max_input_image_width: 1920
     register_refine_iterations: 5
     track_refine_iterations: 2
+
+    pose_filter:
+      default_dt: 0.03333333333333333
+      q_pos: 0.0001
+      q_rot: 0.0001
+      q_vel: 0.001
+      q_omega: 0.001
+      sigma_pos_obs: 0.01
+      sigma_rot_obs: 0.05
+      sigma_pos_motion: 0.05
+      sigma_rot_motion: 0.35
+      min_quality: 0.01
+      gate_threshold: 16.81
+      reject_cov_increase: 0.0001
+      enable_gating: true
+      enable_adaptive_R: true

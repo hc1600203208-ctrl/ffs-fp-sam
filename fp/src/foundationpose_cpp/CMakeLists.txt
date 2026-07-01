@@ -127,6 +127,8 @@ if(BUILD_ROS2_NODE)
 
   add_executable(foundationpose_stereo_tracker_node
     src/foundationpose_stereo_tracker_node.cpp
+    src/adaptive_se3_pose_filter.cpp
+    src/se3_utils.cpp
   )
 
   add_executable(rgbd_sequence_publisher_node

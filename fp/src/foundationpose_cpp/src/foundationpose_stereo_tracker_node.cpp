@@ -24,6 +24,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/header.hpp>
 
+#include "adaptive_se3_pose_filter.h"
 #include "depth_confidence.hpp"
 #include "detection_6d_foundationpose/foundationpose.hpp"
 #include "detection_6d_foundationpose/mesh_loader.hpp"
@@ -72,6 +73,11 @@ bool CheckTimestamp(const builtin_interfaces::msg::Time &time1,
   }
 
   return std::fabs(timestamp1 - timestamp2) <= max_delta_sec;
+}
+
+double StampToSeconds(const builtin_interfaces::msg::Time &stamp)
+{
+  return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) / 1e9;
 }
 
 Eigen::Matrix3f BuildIntrinsicMatrix(double fx, double fy, double cx, double cy)
@@ -513,6 +519,20 @@ private:
     this->declare_parameter<int>("max_input_image_width", 1920);
     this->declare_parameter<int>("register_refine_iterations", 5);
     this->declare_parameter<int>("track_refine_iterations", 2);
+    this->declare_parameter<double>("pose_filter.default_dt", 1.0 / 30.0);
+    this->declare_parameter<double>("pose_filter.q_pos", 1e-4);
+    this->declare_parameter<double>("pose_filter.q_rot", 1e-4);
+    this->declare_parameter<double>("pose_filter.q_vel", 1e-3);
+    this->declare_parameter<double>("pose_filter.q_omega", 1e-3);
+    this->declare_parameter<double>("pose_filter.sigma_pos_obs", 0.01);
+    this->declare_parameter<double>("pose_filter.sigma_rot_obs", 0.05);
+    this->declare_parameter<double>("pose_filter.sigma_pos_motion", 0.05);
+    this->declare_parameter<double>("pose_filter.sigma_rot_motion", 0.35);
+    this->declare_parameter<double>("pose_filter.min_quality", 0.01);
+    this->declare_parameter<double>("pose_filter.gate_threshold", 16.81);
+    this->declare_parameter<double>("pose_filter.reject_cov_increase", 1e-4);
+    this->declare_parameter<bool>("pose_filter.enable_gating", true);
+    this->declare_parameter<bool>("pose_filter.enable_adaptive_R", true);
     this->declare_parameter<int>("mask_poll_interval_ms", 200);
     this->declare_parameter<bool>("resize_mask_to_input", false);
     this->declare_parameter<bool>("publish_visualization", false);
@@ -567,6 +587,33 @@ private:
         static_cast<size_t>(this->get_parameter("register_refine_iterations").as_int());
     track_refine_iters_ =
         static_cast<size_t>(this->get_parameter("track_refine_iterations").as_int());
+    pose_filter_default_dt_ = this->get_parameter("pose_filter.default_dt").as_double();
+    pose_filter_params_.q_pos =
+        static_cast<float>(this->get_parameter("pose_filter.q_pos").as_double());
+    pose_filter_params_.q_rot =
+        static_cast<float>(this->get_parameter("pose_filter.q_rot").as_double());
+    pose_filter_params_.q_vel =
+        static_cast<float>(this->get_parameter("pose_filter.q_vel").as_double());
+    pose_filter_params_.q_omega =
+        static_cast<float>(this->get_parameter("pose_filter.q_omega").as_double());
+    pose_filter_params_.sigma_pos_obs =
+        static_cast<float>(this->get_parameter("pose_filter.sigma_pos_obs").as_double());
+    pose_filter_params_.sigma_rot_obs =
+        static_cast<float>(this->get_parameter("pose_filter.sigma_rot_obs").as_double());
+    pose_filter_params_.sigma_pos_motion =
+        static_cast<float>(this->get_parameter("pose_filter.sigma_pos_motion").as_double());
+    pose_filter_params_.sigma_rot_motion =
+        static_cast<float>(this->get_parameter("pose_filter.sigma_rot_motion").as_double());
+    pose_filter_params_.min_quality =
+        static_cast<float>(this->get_parameter("pose_filter.min_quality").as_double());
+    pose_filter_params_.gate_threshold =
+        static_cast<float>(this->get_parameter("pose_filter.gate_threshold").as_double());
+    pose_filter_params_.reject_cov_increase =
+        static_cast<float>(this->get_parameter("pose_filter.reject_cov_increase").as_double());
+    pose_filter_params_.enable_gating =
+        this->get_parameter("pose_filter.enable_gating").as_bool();
+    pose_filter_params_.enable_adaptive_R =
+        this->get_parameter("pose_filter.enable_adaptive_R").as_bool();
     mask_poll_interval_ms_     = this->get_parameter("mask_poll_interval_ms").as_int();
     resize_mask_to_input_      = this->get_parameter("resize_mask_to_input").as_bool();
     publish_visualization_     = this->get_parameter("publish_visualization").as_bool();
@@ -984,34 +1031,116 @@ private:
       return false;
     }
 
-    has_pose_  = true;
-    last_pose_ = pose;
+    const float init_dt = static_cast<float>(
+        std::isfinite(pose_filter_default_dt_) && pose_filter_default_dt_ > 0.0
+            ? pose_filter_default_dt_
+            : 1.0 / 30.0);
+    pose_filter_.initialize(pose, init_dt, pose_filter_params_);
+
+    has_pose_                = true;
+    last_pose_               = pose_filter_.getPose();
+    has_last_pose_timestamp_ = true;
+    last_pose_timestamp_sec_ = StampToSeconds(header.stamp);
+    filter_frame_id_         = 0;
     PublishPose(header, last_pose_);
     PublishVisualization(header, rgb, last_pose_);
 
     RCLCPP_INFO(this->get_logger(),
                 "Initial registration succeeded. Tracking now runs from raw stereo images without "
                 "intermediate ROS depth or mask topics.");
+    RCLCPP_INFO(this->get_logger(),
+                "Pose filter frame=%lu quality=%.4f mahalanobis=%.4f accepted translation_residual=%.6f "
+                "rotation_residual=%.6f",
+                static_cast<unsigned long>(filter_frame_id_),
+                pose_filter_.getLastQuality(),
+                pose_filter_.getLastMahalanobisDistance(),
+                pose_filter_.getLastTranslationResidualNorm(),
+                pose_filter_.getLastRotationResidualNorm());
     return true;
   }
 
   void RunTracking(const std_msgs::msg::Header &header, const cv::Mat &rgb, const cv::Mat &depth)
   {
-    Eigen::Matrix4f tracked_pose;
+    if (!pose_filter_.isInitialized())
+    {
+      pose_filter_.initialize(last_pose_,
+                              static_cast<float>(pose_filter_default_dt_),
+                              pose_filter_params_);
+    }
+
+    const float dt = ComputePoseFilterDt(header);
+    const Eigen::Matrix4f predicted_pose = pose_filter_.predict(dt);
+
+    Eigen::Matrix4f observed_pose;
     const bool ok =
-        foundation_pose_->Track(rgb, depth, last_pose_, object_name_, tracked_pose, track_refine_iters_);
+        foundation_pose_->Track(rgb,
+                                depth,
+                                predicted_pose,
+                                object_name_,
+                                observed_pose,
+                                track_refine_iters_);
+    ++filter_frame_id_;
     if (!ok)
     {
       RCLCPP_WARN_THROTTLE(this->get_logger(),
                            *this->get_clock(),
                            2000,
-                           "FoundationPose tracking failed on the current stereo frame.");
+                           "FoundationPose tracking failed on the current stereo frame. Publishing "
+                           "the SE(3) filter prediction.");
+      last_pose_ = pose_filter_.rejectObservation();
+      UpdatePoseFilterTimestamp(header);
+      PublishPose(header, last_pose_);
+      PublishVisualization(header, rgb, last_pose_);
+      RCLCPP_INFO(this->get_logger(),
+                  "Pose filter frame=%lu quality=%.4f mahalanobis=%.4f rejected translation_residual=%.6f "
+                  "rotation_residual=%.6f",
+                  static_cast<unsigned long>(filter_frame_id_),
+                  pose_filter_.getLastQuality(),
+                  pose_filter_.getLastMahalanobisDistance(),
+                  pose_filter_.getLastTranslationResidualNorm(),
+                  pose_filter_.getLastRotationResidualNorm());
       return;
     }
 
-    last_pose_ = tracked_pose;
+    last_pose_ = pose_filter_.update(observed_pose);
+    UpdatePoseFilterTimestamp(header);
+    RCLCPP_INFO(this->get_logger(),
+                "Pose filter frame=%lu quality=%.4f mahalanobis=%.4f %s translation_residual=%.6f "
+                "rotation_residual=%.6f",
+                static_cast<unsigned long>(filter_frame_id_),
+                pose_filter_.getLastQuality(),
+                pose_filter_.getLastMahalanobisDistance(),
+                pose_filter_.wasLastObservationAccepted() ? "accepted" : "rejected",
+                pose_filter_.getLastTranslationResidualNorm(),
+                pose_filter_.getLastRotationResidualNorm());
     PublishPose(header, last_pose_);
     PublishVisualization(header, rgb, last_pose_);
+  }
+
+  float ComputePoseFilterDt(const std_msgs::msg::Header &header) const
+  {
+    const double fallback_dt =
+        std::isfinite(pose_filter_default_dt_) && pose_filter_default_dt_ > 0.0
+            ? pose_filter_default_dt_
+            : 1.0 / 30.0;
+    const double stamp_sec = StampToSeconds(header.stamp);
+    if (!has_last_pose_timestamp_ || stamp_sec <= 0.0)
+    {
+      return static_cast<float>(fallback_dt);
+    }
+
+    const double dt = stamp_sec - last_pose_timestamp_sec_;
+    if (!std::isfinite(dt) || dt <= 0.0 || dt > 1.0)
+    {
+      return static_cast<float>(fallback_dt);
+    }
+    return static_cast<float>(dt);
+  }
+
+  void UpdatePoseFilterTimestamp(const std_msgs::msg::Header &header)
+  {
+    last_pose_timestamp_sec_ = StampToSeconds(header.stamp);
+    has_last_pose_timestamp_ = true;
   }
 
   void PublishPose(std_msgs::msg::Header header, const Eigen::Matrix4f &pose)
@@ -1088,6 +1217,8 @@ private:
 
   size_t register_refine_iters_{5};
   size_t track_refine_iters_{2};
+  double pose_filter_default_dt_{1.0 / 30.0};
+  foundationpose_filter::AdaptiveSE3PoseFilterParams pose_filter_params_;
 
   rclcpp::QoS image_qos_profile_;
 
@@ -1105,6 +1236,10 @@ private:
   cv::Mat         latest_depth_;
   std_msgs::msg::Header latest_header_;
   Eigen::Matrix4f       last_pose_{Eigen::Matrix4f::Identity()};
+  foundationpose_filter::AdaptiveSE3PoseFilter pose_filter_;
+  bool                 has_last_pose_timestamp_{false};
+  double               last_pose_timestamp_sec_{0.0};
+  uint64_t             filter_frame_id_{0};
   std::mutex            process_mutex_;
 
   std::shared_ptr<detection_6d::BaseMeshLoader>         mesh_loader_;
