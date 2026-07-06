@@ -12,6 +12,7 @@ void LaunchGwcVolumeKernel(
     int B, int C, int H, int W,
     int D, int G,
     bool normalize,
+    bool reverse_shift,
     cudaStream_t stream);
 
 

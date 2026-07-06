@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -23,7 +22,6 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/header.hpp>
 
-#include "adaptive_se3_pose_filter.h"
 #include "detection_6d_foundationpose/foundationpose.hpp"
 #include "detection_6d_foundationpose/mesh_loader.hpp"
 #include "trt_core/trt_core.h"
@@ -419,7 +417,9 @@ void Draw3DBoundingBox(const Eigen::Matrix3f &intrinsic,
 class FoundationPoseOfflineRgbdNode : public rclcpp::Node
 {
 public:
-  FoundationPoseOfflineRgbdNode() : Node("foundationpose_offline_rgbd_node")
+  FoundationPoseOfflineRgbdNode()
+      : Node("foundationpose_offline_rgbd_node",
+             rclcpp::NodeOptions().allow_undeclared_parameters(true))
   {
     // The constructor follows a clear startup pipeline:
     // 1) declare all configurable parameters,
@@ -475,20 +475,6 @@ private:
     this->declare_parameter<int>("max_input_image_width", 1920);
     this->declare_parameter<int>("register_refine_iterations", 5);
     this->declare_parameter<int>("track_refine_iterations", 2);
-    this->declare_parameter<double>("pose_filter.default_dt", 0.0);
-    this->declare_parameter<double>("pose_filter.q_pos", 1e-4);
-    this->declare_parameter<double>("pose_filter.q_rot", 1e-4);
-    this->declare_parameter<double>("pose_filter.q_vel", 1e-3);
-    this->declare_parameter<double>("pose_filter.q_omega", 1e-3);
-    this->declare_parameter<double>("pose_filter.sigma_pos_obs", 0.01);
-    this->declare_parameter<double>("pose_filter.sigma_rot_obs", 0.05);
-    this->declare_parameter<double>("pose_filter.sigma_pos_motion", 0.05);
-    this->declare_parameter<double>("pose_filter.sigma_rot_motion", 0.35);
-    this->declare_parameter<double>("pose_filter.min_quality", 0.01);
-    this->declare_parameter<double>("pose_filter.gate_threshold", 16.81);
-    this->declare_parameter<double>("pose_filter.reject_cov_increase", 1e-4);
-    this->declare_parameter<bool>("pose_filter.enable_gating", true);
-    this->declare_parameter<bool>("pose_filter.enable_adaptive_R", true);
     this->declare_parameter<int>("visualization_wait_key_ms", 1);
 
     this->declare_parameter<bool>("resize_mask_to_input", false);
@@ -528,33 +514,6 @@ private:
     max_input_image_width_      = this->get_parameter("max_input_image_width").as_int();
     register_refine_iters_      = static_cast<size_t>(this->get_parameter("register_refine_iterations").as_int());
     track_refine_iters_         = static_cast<size_t>(this->get_parameter("track_refine_iterations").as_int());
-    pose_filter_default_dt_      = this->get_parameter("pose_filter.default_dt").as_double();
-    pose_filter_params_.q_pos =
-        static_cast<float>(this->get_parameter("pose_filter.q_pos").as_double());
-    pose_filter_params_.q_rot =
-        static_cast<float>(this->get_parameter("pose_filter.q_rot").as_double());
-    pose_filter_params_.q_vel =
-        static_cast<float>(this->get_parameter("pose_filter.q_vel").as_double());
-    pose_filter_params_.q_omega =
-        static_cast<float>(this->get_parameter("pose_filter.q_omega").as_double());
-    pose_filter_params_.sigma_pos_obs =
-        static_cast<float>(this->get_parameter("pose_filter.sigma_pos_obs").as_double());
-    pose_filter_params_.sigma_rot_obs =
-        static_cast<float>(this->get_parameter("pose_filter.sigma_rot_obs").as_double());
-    pose_filter_params_.sigma_pos_motion =
-        static_cast<float>(this->get_parameter("pose_filter.sigma_pos_motion").as_double());
-    pose_filter_params_.sigma_rot_motion =
-        static_cast<float>(this->get_parameter("pose_filter.sigma_rot_motion").as_double());
-    pose_filter_params_.min_quality =
-        static_cast<float>(this->get_parameter("pose_filter.min_quality").as_double());
-    pose_filter_params_.gate_threshold =
-        static_cast<float>(this->get_parameter("pose_filter.gate_threshold").as_double());
-    pose_filter_params_.reject_cov_increase =
-        static_cast<float>(this->get_parameter("pose_filter.reject_cov_increase").as_double());
-    pose_filter_params_.enable_gating =
-        this->get_parameter("pose_filter.enable_gating").as_bool();
-    pose_filter_params_.enable_adaptive_R =
-        this->get_parameter("pose_filter.enable_adaptive_R").as_bool();
     visualization_wait_key_ms_  = this->get_parameter("visualization_wait_key_ms").as_int();
     resize_mask_to_input_       = this->get_parameter("resize_mask_to_input").as_bool();
     publish_pose_               = this->get_parameter("publish_pose").as_bool();
@@ -599,11 +558,6 @@ private:
     if (video_fps_ <= 0.0)
     {
       throw std::invalid_argument("Parameter `video_fps` must be positive.");
-    }
-
-    if (!std::isfinite(pose_filter_default_dt_) || pose_filter_default_dt_ <= 0.0)
-    {
-      pose_filter_default_dt_ = 1.0 / video_fps_;
     }
   }
 
@@ -845,20 +799,16 @@ private:
       throw std::runtime_error("Initial FoundationPose registration failed on frame " + frame.id);
     }
 
-    pose_filter_.initialize(pose, static_cast<float>(pose_filter_default_dt_), pose_filter_params_);
-    last_pose_       = pose_filter_.getPose();
-    filter_frame_id_ = 0;
-
-    PublishPose(frame.id, last_pose_);
-    SaveVisualization(frame.id, rgb, last_pose_);
+    last_pose_ = pose;
+    PublishPose(frame.id, pose);
+    SaveVisualization(frame.id, rgb, pose);
 
     RCLCPP_INFO(this->get_logger(), "Initial registration succeeded on frame %s.", frame.id.c_str());
-    LogPoseFilterStatus(frame.id, "accepted");
   }
 
-  // Tracks the object on one frame using the SE(3) filter prediction as initialization.
+  // Tracks the object on one frame using the previous valid pose as initialization.
   // A failure here does not stop the whole sequence; the node simply keeps the last
-  // predicted pose and records the failure in the CSV output.
+  // known pose and records the failure in the CSV output.
   bool ProcessTrackingFrame(size_t frame_index)
   {
     const FramePaths &frame = frames_.at(frame_index);
@@ -870,114 +820,26 @@ private:
       throw std::runtime_error("RGB and depth image sizes do not match for frame: " + frame.id);
     }
 
-    if (!pose_filter_.isInitialized())
-    {
-      pose_filter_.initialize(last_pose_,
-                              static_cast<float>(pose_filter_default_dt_),
-                              pose_filter_params_);
-    }
-
-    const Eigen::Matrix4f predicted_pose =
-        pose_filter_.predict(ComputePoseFilterDt(frame_index));
-
-    Eigen::Matrix4f observed_pose;
+    Eigen::Matrix4f tracked_pose;
     const bool ok =
-        foundation_pose_->Track(rgb,
-                                depth,
-                                predicted_pose,
-                                object_name_,
-                                observed_pose,
-                                track_refine_iters_);
-    ++filter_frame_id_;
-
-    if (!ok)
-    {
-      last_pose_ = pose_filter_.rejectObservation();
-
-      PoseRecord record;
-      record.mode    = "track";
-      record.success = false;
-      record.pose    = last_pose_;
-      SavePoseRecord(frame.id, record);
-
-      PublishPose(frame.id, last_pose_);
-      SaveVisualization(frame.id, rgb, last_pose_);
-      LogPoseFilterStatus(frame.id, "rejected");
-      RCLCPP_WARN(this->get_logger(),
-                  "Tracking failed on frame %s; publishing the SE(3) filter prediction.",
-                  frame.id.c_str());
-      return false;
-    }
-
-    last_pose_ = pose_filter_.update(observed_pose);
+        foundation_pose_->Track(rgb, depth, last_pose_, object_name_, tracked_pose, track_refine_iters_);
 
     PoseRecord record;
     record.mode    = "track";
     record.success = ok;
-    record.pose    = last_pose_;
+    record.pose    = ok ? tracked_pose : last_pose_;
     SavePoseRecord(frame.id, record);
 
+    if (!ok)
+    {
+      RCLCPP_WARN(this->get_logger(), "Tracking failed on frame %s, keeping the last valid pose.", frame.id.c_str());
+      return false;
+    }
+
+    last_pose_ = tracked_pose;
     PublishPose(frame.id, last_pose_);
     SaveVisualization(frame.id, rgb, last_pose_);
-    LogPoseFilterStatus(frame.id,
-                        pose_filter_.wasLastObservationAccepted() ? "accepted" : "rejected");
     return true;
-  }
-
-  float ComputePoseFilterDt(size_t frame_index) const
-  {
-    if (frame_index > initial_frame_index_)
-    {
-      const auto maybe_current = TryParseFrameTimestampSeconds(frames_.at(frame_index).id);
-      const auto maybe_previous = TryParseFrameTimestampSeconds(frames_.at(frame_index - 1).id);
-      if (maybe_current.first && maybe_previous.first)
-      {
-        const double dt = maybe_current.second - maybe_previous.second;
-        if (std::isfinite(dt) && dt > 0.0 && dt <= 1.0)
-        {
-          return static_cast<float>(dt);
-        }
-      }
-    }
-
-    return static_cast<float>(pose_filter_default_dt_);
-  }
-
-  std::pair<bool, double> TryParseFrameTimestampSeconds(const std::string &frame_id) const
-  {
-    try
-    {
-      size_t parsed_chars = 0;
-      const long long stamp = std::stoll(frame_id, &parsed_chars);
-      if (parsed_chars != frame_id.size() || stamp <= 0)
-      {
-        return {false, 0.0};
-      }
-
-      if (frame_id.size() >= 16)
-      {
-        return {true, static_cast<double>(stamp) / 1e9};
-      }
-      return {false, 0.0};
-    }
-    catch (const std::exception &)
-    {
-      return {false, 0.0};
-    }
-  }
-
-  void LogPoseFilterStatus(const std::string &frame_id, const char *accepted_state) const
-  {
-    RCLCPP_INFO(this->get_logger(),
-                "Pose filter frame_id=%s frame=%lu quality=%.4f mahalanobis=%.4f %s "
-                "translation_residual=%.6f rotation_residual=%.6f",
-                frame_id.c_str(),
-                static_cast<unsigned long>(filter_frame_id_),
-                pose_filter_.getLastQuality(),
-                pose_filter_.getLastMahalanobisDistance(),
-                accepted_state,
-                pose_filter_.getLastTranslationResidualNorm(),
-                pose_filter_.getLastRotationResidualNorm());
   }
 
   // Writes one result line into the pose CSV file.
@@ -1105,8 +967,6 @@ private:
   size_t register_refine_iters_{5};
   size_t track_refine_iters_{2};
   size_t initial_frame_index_{0};
-  double pose_filter_default_dt_{1.0 / 30.0};
-  foundationpose_filter::AdaptiveSE3PoseFilterParams pose_filter_params_;
 
   bool resize_mask_to_input_{false};
   bool publish_pose_{true};
@@ -1117,8 +977,6 @@ private:
 
   Eigen::Matrix3f intrinsic_{Eigen::Matrix3f::Identity()};
   Eigen::Matrix4f last_pose_{Eigen::Matrix4f::Identity()};
-  foundationpose_filter::AdaptiveSE3PoseFilter pose_filter_;
-  uint64_t        filter_frame_id_{0};
   cv::Mat         initial_mask_;
   std::vector<FramePaths> frames_;
   std::ofstream           pose_stream_;

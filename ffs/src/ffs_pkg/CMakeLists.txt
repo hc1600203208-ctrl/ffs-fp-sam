@@ -120,6 +120,22 @@ set_target_properties(dnn_stereo_rectified_depth_node PROPERTIES
   BUILD_RPATH "$ORIGIN"
   INSTALL_RPATH "$ORIGIN;${TENSORRT_LIBRARY_DIR}")
 
+cuda_add_executable(dnn_stereo_fast_depth_node
+  src/dnn_stereo_fast_depth_node.cpp
+)
+ament_target_dependencies(dnn_stereo_fast_depth_node
+  rclcpp
+  cv_bridge
+  CUDA OpenCV
+  message_filters
+  sensor_msgs
+  std_msgs
+)
+target_link_libraries(dnn_stereo_fast_depth_node stereo_estimator)
+set_target_properties(dnn_stereo_fast_depth_node PROPERTIES
+  BUILD_RPATH "$ORIGIN"
+  INSTALL_RPATH "$ORIGIN;${TENSORRT_LIBRARY_DIR}")
+
 cuda_add_executable(offline_stereo_depth_node
   src/offline_stereo_depth_node.cpp
   src/depth_confidence.cpp
@@ -173,6 +189,7 @@ install(TARGETS
   stereo_estimator
   dnn_stereo_depth_node
   dnn_stereo_rectified_depth_node
+  dnn_stereo_fast_depth_node
   offline_stereo_depth_node
   disparity2depth_node
   DESTINATION lib/${PROJECT_NAME})

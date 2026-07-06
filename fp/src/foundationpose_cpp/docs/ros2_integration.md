@@ -64,7 +64,7 @@ To process the sample `mustard0` RGB-D sequence directly from disk:
 ```bash
 source install/setup.bash
 ros2 run foundationpose_cpp foundationpose_offline_rgbd_node \
-  --ros-args --params-file /home/hc/weizi/fp/src/foundationpose_cpp/config/foundationpose_offline_rgbd_example.yaml
+  --ros-args --params-file /home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/config/foundationpose_offline_rgbd_example.yaml
 ```
 
 By default the publisher uses `reliable` QoS and also publishes `CameraInfo`, which makes it

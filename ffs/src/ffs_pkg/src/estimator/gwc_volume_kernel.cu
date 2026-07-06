@@ -1,5 +1,8 @@
 #include "gwc_volume_kernel.h"
 
+#include <cstdlib>
+#include <cstring>
+
 #include <cuda_runtime.h>
 
 
@@ -44,14 +47,29 @@ void LaunchPreprocessKernel(
     dim3 block(16, 16);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
-    // FoundationStereo uses ImageNet-style normalization.
-    // Formula: (x/255.0 - mean) / std.
+    float scale = 1.0f / 255.0f;
+    float meanR = 0.485f;
+    float meanG = 0.456f;
+    float meanB = 0.406f;
+    float stdR = 0.229f;
+    float stdG = 0.224f;
+    float stdB = 0.225f;
+
+    const char* mode = std::getenv("FFS_PREPROCESS_MODE");
+    if (mode != nullptr) {
+        if (std::strcmp(mode, "raw") == 0) {
+            scale = 1.0f;
+            meanR = meanG = meanB = 0.0f;
+            stdR = stdG = stdB = 1.0f;
+        } else if (std::strcmp(mode, "zero_to_one") == 0) {
+            scale = 1.0f / 255.0f;
+            meanR = meanG = meanB = 0.0f;
+            stdR = stdG = stdB = 1.0f;
+        }
+    }
+
     preprocess_rgb_to_planar_kernel<<<grid, block, 0, stream>>>(
-        d_src, d_dst, width, height, 
-        1.0f / 255.0f,
-        0.485f, 0.456f, 0.406f,
-        0.229f, 0.224f, 0.225f
-    );
+        d_src, d_dst, width, height, scale, meanR, meanG, meanB, stdR, stdG, stdB);
 }
 
 
@@ -80,7 +98,8 @@ __global__ void gwc_volume_kernel_simple(
     half* cost_volume,         // [G, D, H, W]
     int C, int H, int W,
     int D, int G,
-    bool normalize)
+    bool normalize,
+    bool reverse_shift)
 {
     int C_g = C / G;
     
@@ -93,9 +112,9 @@ __global__ void gwc_volume_kernel_simple(
         return;
     
     float dot_product = 0.0f;
-    int tgt_w = w - d;
+    int tgt_w = reverse_shift ? w + d : w - d;
     
-    if (tgt_w >= 0) {
+    if (tgt_w >= 0 && tgt_w < W) {
         // Compute dot product
         for (int cg = 0; cg < C_g; ++cg) {
             int c = g * C_g + cg;
@@ -149,6 +168,7 @@ void LaunchGwcVolumeKernel(
     int B, int C, int H, int W,
     int D, int G,
     bool normalize,
+    bool reverse_shift,
     cudaStream_t stream)
 {
     // Assert batch size is 1
@@ -169,7 +189,7 @@ void LaunchGwcVolumeKernel(
     // Launch kernel
     gwc_volume_kernel_simple<<<grid, block, 0, stream>>>(
         d_refimg_fea, d_targetimg_fea, d_cost_volume,
-        C, H, W, D, G, normalize
+        C, H, W, D, G, normalize, reverse_shift
     );
     
     // Check for launch errors

@@ -52,8 +52,8 @@ foundationpose_stereo_tracker_node:
       q_omega: 0.001
       sigma_pos_obs: 0.01
       sigma_rot_obs: 0.05
-      sigma_pos_motion: 0.05
-      sigma_rot_motion: 0.35
+      sigma_pos_motion: 0.5
+      sigma_rot_motion: 0.5
       min_quality: 0.01
       gate_threshold: 16.81
       reject_cov_increase: 0.0001

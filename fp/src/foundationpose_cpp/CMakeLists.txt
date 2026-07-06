@@ -137,6 +137,12 @@ if(BUILD_ROS2_NODE)
 
   add_executable(foundationpose_offline_rgbd_node
     src/foundationpose_offline_rgbd_node.cpp
+    src/adaptive_se3_pose_filter.cpp
+    src/se3_utils.cpp
+  )
+
+  add_executable(foundationpose_offline_rgbd_no_filter_node
+    src/foundationpose_offline_rgbd_no_filter_node.cpp
   )
 
   target_link_libraries(foundationpose_tracker_node
@@ -163,6 +169,12 @@ if(BUILD_ROS2_NODE)
   )
 
   target_link_libraries(foundationpose_offline_rgbd_node
+    detection_6d_foundationpose
+    trt_core
+    ${OpenCV_LIBS}
+  )
+
+  target_link_libraries(foundationpose_offline_rgbd_no_filter_node
     detection_6d_foundationpose
     trt_core
     ${OpenCV_LIBS}
@@ -195,6 +207,12 @@ if(BUILD_ROS2_NODE)
   )
 
   target_include_directories(foundationpose_offline_rgbd_node PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
+    ${OpenCV_INCLUDE_DIRS}
+  )
+
+  target_include_directories(foundationpose_offline_rgbd_no_filter_node PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
     ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
     ${OpenCV_INCLUDE_DIRS}
@@ -245,12 +263,21 @@ if(BUILD_ROS2_NODE)
     cv_bridge
   )
 
+  ament_target_dependencies(foundationpose_offline_rgbd_no_filter_node
+    rclcpp
+    sensor_msgs
+    geometry_msgs
+    std_msgs
+    cv_bridge
+  )
+
   install(TARGETS foundationpose_tracker_node
                   foundationpose_file_mask_tracker_node
                   foundationpose_stereo_tracker_node
                   fast_foundation_stereo_embedded
                   rgbd_sequence_publisher_node
                   foundationpose_offline_rgbd_node
+                  foundationpose_offline_rgbd_no_filter_node
     DESTINATION lib/${PROJECT_NAME}
   )
 

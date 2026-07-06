@@ -160,16 +160,35 @@ int main(int argc, char** argv) {
         // std::string right_image_path = "/workspaces/data/right.png";
         // std::string output_path = "/workspaces/data/1_disparity_gen.png";
 
-        std::string feature_engine_path = "/home/nvidia/ros_workspace/ffs/model/feature_runner_fp16.engine";
-        std::string post_engine_path = "/home/nvidia/ros_workspace/ffs/model/post_runner_fp16.engine";
+        std::string feature_engine_path = "/home/hc/weizi/ffs/model/feature_runner_fp16_5060.engine";
+        std::string post_engine_path = "/home/hc/weizi/ffs/model/post_runner_fp16_5060.engine";
 
-        std::string left_image_path = "/home/nvidia/ros_workspace/ffs/assets/left.png";
-        std::string right_image_path = "/home/nvidia/ros_workspace/ffs/assets/right.png";
-        std::string output_path = "/home/nvidia/ros_workspace/ffs/assets/1_disparity_gen.png";
+        std::string left_image_path = "/home/hc/weizi/ffs+fp+sam/ffs/demo_data/left.png";
+        std::string right_image_path = "/home/hc/weizi/ffs+fp+sam/ffs/demo_data/right.png";
+        std::string output_path = "/home/hc/weizi/ffs+fp+sam/ffs/results/fast_foundation_stereo_test_disparity.png";
 
         // 1. Configuration (matches your ONNX export)
         const int target_height = 448;
         const int target_width = 640;
+
+        if (argc >= 6) {
+            feature_engine_path = argv[1];
+            post_engine_path = argv[2];
+            left_image_path = argv[3];
+            right_image_path = argv[4];
+            output_path = argv[5];
+        } else if (argc != 1) {
+            std::cerr << "Usage: " << argv[0]
+                      << " [feature.engine post.engine left.png right.png output_vis.png]"
+                      << std::endl;
+            return -1;
+        }
+
+        std::cout << "[Main] feature_engine_path: " << feature_engine_path << std::endl;
+        std::cout << "[Main] post_engine_path: " << post_engine_path << std::endl;
+        std::cout << "[Main] left_image_path: " << left_image_path << std::endl;
+        std::cout << "[Main] right_image_path: " << right_image_path << std::endl;
+        std::cout << "[Main] output_path: " << output_path << std::endl;
 
         // 2. Initialize Engine
         std::cout << "[Main] Initializing Engine..." << std::endl;

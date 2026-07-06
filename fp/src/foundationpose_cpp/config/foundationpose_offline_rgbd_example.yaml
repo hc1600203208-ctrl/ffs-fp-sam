@@ -36,43 +36,60 @@
 #     show_visualization_window: false
 #     shutdown_when_done: true
 
-# foundationpose_offline_rgbd_node:
-#   ros__parameters:
-#     refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp16_5060.engine
-#     scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp16_5060.engine
-#     mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
-#     object_name: mustard
+foundationpose_offline_rgbd_node:
+  ros__parameters:
+    refiner_engine_path: /home/hc/weizi/ffs+fp+sam/fp/models/refiner_hwc_dynamic_fp32_5060.engine
+    scorer_engine_path: /home/hc/weizi/ffs+fp+sam/fp/models/scorer_hwc_dynamic_fp32_5060.engine
+    mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh1/textured_mesh.obj
+    object_name: mustard
 
-#     sequence_dir: /home/hc/weizi/dataset/jrnew-blue
-#     rgb_subdir: rgb
-#     depth_subdir: depth_raw
-#     masks_subdir: masks
-#     initial_frame_id: "0000"
-#     initial_mask_path: /home/hc/weizi/dataset/jrnew-blue/masks/0000.png
-#     camera_info_path: /home/hc/weizi/dataset/jrnew-blue/cam_K.txt
+    sequence_dir: /home/hc/weizi/dataset/jrnew-blue
+    rgb_subdir: rgb
+    depth_subdir: depth_raw
+    masks_subdir: masks
+    initial_frame_id: "0000"
+    initial_mask_path: /home/hc/weizi/dataset/jrnew-blue/masks/0000.png
+    camera_info_path: /home/hc/weizi/dataset/jrnew-blue/cam_K.txt
 
-#     pose_topic: /foundationpose/offline_pose
-#     pose_frame_id: camera_color_optical_frame
-#     visualization_topic: /foundationpose/offline_visualization
+    pose_topic: /foundationpose/offline_pose
+    pose_frame_id: camera_color_optical_frame
+    visualization_topic: /foundationpose/offline_visualization
 
-#     output_pose_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/poses.csv
-#     visualization_output_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/visualizations
-#     video_output_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/track.mp4
+    output_pose_path: /home/hc/weizi/ffs+fp+sam/fp/offline_outputs/poses.csv
+    visualization_output_dir: /home/hc/weizi/ffs+fp+sam/fp/offline_outputs/visualizations
+    video_output_path: /home/hc/weizi/ffs+fp+sam/fp/offline_outputs/track.mp4
 
-#     depth_scale: 0.001
-#     video_fps: 30.0
-#     max_input_image_height: 1080
-#     max_input_image_width: 1920
-#     register_refine_iterations: 5
-#     track_refine_iterations: 2
-#     visualization_wait_key_ms: 1
+    depth_scale: 0.001
+    video_fps: 30.0
+    max_input_image_height: 1080
+    max_input_image_width: 1920
+    register_refine_iterations: 5
+    track_refine_iterations: 4
+    visualization_wait_key_ms: 1
 
-#     resize_mask_to_input: false
-#     publish_pose: true
-#     publish_visualization: true
-#     save_visualizations: true
-#     show_visualization_window: false
-#     shutdown_when_done: true
+    pose_filter:
+      default_dt: 0.0
+      q_pos: 0.00002
+      q_rot: 0.00002
+      q_vel: 0.00005
+      q_omega: 0.00005
+      sigma_pos_obs: 0.03
+      sigma_rot_obs: 0.15
+      sigma_pos_motion: 0.015
+      sigma_rot_motion: 0.12
+      min_quality: 0.001
+      gate_threshold: 6.0
+      reject_cov_increase: 0.000001
+      enable_gating: true
+      enable_adaptive_R: true
+    visualization_wait_key_ms: 1
+
+    resize_mask_to_input: false
+    publish_pose: true
+    publish_visualization: true
+    save_visualizations: true
+    show_visualization_window: false
+    shutdown_when_done: true
 
 # foundationpose_offline_rgbd_node:
 #   ros__parameters:
@@ -112,41 +129,56 @@
 #     show_visualization_window: false
 #     shutdown_when_done: true
 
-foundationpose_offline_rgbd_node:
-  ros__parameters:
-    refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp16_5060.engine
-    scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp16_5060.engine
-    mesh_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/mesh/textured_mesh.obj
-    object_name: mustard
+# foundationpose_offline_rgbd_node:
+#   ros__parameters:
+#     refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp32_5060.engine
+#     scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp32_5060.engine
+#     mesh_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/mesh/textured_mesh.obj
+#     object_name: mustard
 
-    sequence_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden  
-    rgb_subdir: rgb
-    depth_subdir: depth
-    masks_subdir: masks
-    initial_frame_id: "0000"
-    initial_mask_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/masks/0000.png
-    camera_info_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/cam_K.txt
+#     sequence_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden  
+#     rgb_subdir: rgb
+#     depth_subdir: depth
+#     masks_subdir: masks
+#     initial_frame_id: "0000"
+#     initial_mask_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/masks/0000.png
+#     camera_info_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/cam_K.txt
 
-    pose_topic: /foundationpose/offline_pose
-    pose_frame_id: camera_color_optical_frame
-    visualization_topic: /foundationpose/offline_visualization
+#     pose_topic: /foundationpose/offline_pose
+#     pose_frame_id: camera_color_optical_frame
+#     visualization_topic: /foundationpose/offline_visualization
 
-    output_pose_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/poses.csv
-    visualization_output_dir: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/visualizations
-    video_output_path: /home/hc/weizi/fp/src/foundationpose_cpp/test_data/jrgolden/offline_result/track.mp4
+#     output_pose_path: /home/hc/weizi/ffs+fp+sam/fp/offline_outputs/poses.csv
+#     visualization_output_dir: /home/hc/weizi/ffs+fp+sam/fp/offline_outputs/visualizations
+#     video_output_path: /home/hc/weizi/ffs+fp+sam/fp/offline_outputs/track.mp4
 
-    depth_scale: 0.001
-    video_fps: 30.0
-    max_input_image_height: 1080
-    max_input_image_width: 1920
-    register_refine_iterations: 5
-    track_refine_iterations: 2
-    visualization_wait_key_ms: 1
+#     depth_scale: 0.001
+#     video_fps: 30.0
+#     max_input_image_height: 1080
+#     max_input_image_width: 1920
+#     register_refine_iterations: 5
+#     track_refine_iterations: 2
 
-    resize_mask_to_input: false
-    publish_pose: true
-    publish_visualization: true
-    save_visualizations: true
-    show_visualization_window: false
-    shutdown_when_done: true
+#     pose_filter:
+#       default_dt: 0.0
+#       q_pos: 0.0001
+#       q_rot: 0.0001
+#       q_vel: 0.001
+#       q_omega: 0.001
+#       sigma_pos_obs: 0.01
+#       sigma_rot_obs: 0.05
+#       sigma_pos_motion: 0.05
+#       sigma_rot_motion: 0.35
+#       min_quality: 0.01
+#       gate_threshold: 16.81
+#       reject_cov_increase: 0.0001
+#       enable_gating: true
+#       enable_adaptive_R: true
+#     visualization_wait_key_ms: 1
 
+#     resize_mask_to_input: false
+#     publish_pose: true
+#     publish_visualization: true
+#     save_visualizations: true
+#     show_visualization_window: false
+#     shutdown_when_done: true

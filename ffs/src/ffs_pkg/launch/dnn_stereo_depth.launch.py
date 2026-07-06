@@ -31,7 +31,8 @@ def generate_launch_description():
     launch_args = [
         DeclareLaunchArgument(
             'engine_file_path',
-            default_value='["/home/hc/weizi/ffs/model/feature_runner_fp16_5060.engine", "/home/hc/weizi/ffs/model/post_runner_fp16_5060.engine"]',
+            # default_value='["/home/hc/weizi/ffs/model/feature_runner_fp16_5060.engine", "/home/hc/weizi/ffs/model/post_runner_fp16_5060.engine"]',
+            default_value='["/home/hc/model/ffs/20-30-48/feature_runner.engine", "/home/hc/model/ffs/20-30-48/post_runner.engine"]',
             description='The absolute file path to the TensorRT engine file'),
         DeclareLaunchArgument(
             'model_type',
@@ -92,11 +93,11 @@ def generate_launch_description():
             description='Whether to publish /weight_map'),
         DeclareLaunchArgument(
             'save_results',
-            default_value='false',
+            default_value='true',
             description='Whether to save each aligned depth frame and corresponding left RGB image'),
         DeclareLaunchArgument(
             'save_output_dir',
-            default_value='/tmp/fast_foundation_stereo_capture',
+            default_value='/home/hc/weizi/ffs+fp+sam/ffs/results',
             description='Output root directory for saved rgb/depth frames'),
         DeclareLaunchArgument(
             'save_depth_scale',

@@ -39,8 +39,8 @@ python scripts/make_onnx.py \
     --save_path output/23-36-37/ --height 480 --width 640
 
 # Build engine (via trtexec)
-/usr/src/tensorrt/bin/trtexec --onnx=output/23-36-37/feature_runner.onnx --saveEngine=output/23-36-37/feature_runner_fp16.engine --fp16  --useCudaGraph
-/usr/src/tensorrt/bin/trtexec --onnx=output/23-36-37/post_runner.onnx --saveEngine=output/23-36-37/post_runner_fp16.engine --fp16  --useCudaGraph
+/usr/src/tensorrt/bin/trtexec --onnx=/home/hc/model/20-30-48/feature_runner.onnx --saveEngine=/home/hc/model/20-30-48/feature_runner_fp16_5060.engine --fp16  --useCudaGraph
+/usr/src/tensorrt/bin/trtexec --onnx=/home/hc/model/20-30-48/post_runner.onnx --saveEngine=/home/hc/model/20-30-48/post_runner_fp16_5060.engine --fp16  --useCudaGraph
 
 ```
 

@@ -1,0 +1,18 @@
+https://cn.download.nvidia.com/XFree86/Linux-x86_64/580.159.03/NVIDIA-Linux-x86_64-580.159.03.run
+https://developer.nvidia.com/cuda-toolkit-archive
+cuda12.8
+https://developer.nvidia.com/cudnn-archive
+cudnn9.23.1
+https://developer.nvidia.com/tensorrt/download/10x 
+Tensorrt10.8.0.43
+梯子：
+https://dash.yfjc.xyz/api/v1/client/subscribe?token=4228bf980a4cb640002da25b580f1b80
+ros2安装和换源：
+https://blog.csdn.net/weixin_45385956/article/details/155265778 
+wget http://fishros.com/install -O fishros && . fishros
+双系统安装：
+https://zhimaspace.com/?p=891
+https://blog.csdn.net/weixin_39507455/article/details/158287853
+bundlesdf配置流程：
+https://github.com/vanstrong12138/setup_envs/blob/main/BundleSDF/DeployBundleSDF.md
+https://github.com/NVlabs/BundleSDF/issues/205

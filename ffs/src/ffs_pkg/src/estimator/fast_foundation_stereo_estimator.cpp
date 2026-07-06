@@ -8,6 +8,8 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <cstdlib>
+#include <cstring>
 
 #include <rclcpp/rclcpp.hpp>
 
@@ -44,6 +46,20 @@ void checkTrtCall(bool ok, const std::string& what) {
 bool HasDynamicDim(const nvinfer1::Dims& dims) {
     for (int i = 0; i < dims.nbDims; ++i) {
         if (dims.d[i] < 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HasIOTensor(const nvinfer1::ICudaEngine* engine, const char* tensor_name) {
+    if (engine == nullptr || tensor_name == nullptr) {
+        return false;
+    }
+
+    for (int i = 0; i < engine->getNbIOTensors(); ++i) {
+        const char* current_name = engine->getIOTensorName(i);
+        if (current_name != nullptr && std::string(current_name) == tensor_name) {
             return true;
         }
     }
@@ -213,11 +229,20 @@ void FastFoundationStereoEstimator::loadEngine(const std::string& featureEngineP
     setupContext(postEnginePath, m_post_engine, m_post_context);
 
     auto maybeSetShape = [&](const char* tensor_name, const nvinfer1::Dims& dims) {
+        if (!HasIOTensor(m_post_engine, tensor_name)) {
+            RCLCPP_WARN(
+                rclcpp::get_logger("FastFoundationStereoEstimator"),
+                "Post engine does not expose tensor '%s'; skipping shape/address binding for this optional input.",
+                tensor_name);
+            return false;
+        }
+
         const auto engine_dims = m_post_engine->getTensorShape(tensor_name);
         ValidateStaticOrResolvedShape(tensor_name, engine_dims, dims);
         if (HasDynamicDim(engine_dims)) {
             checkTrtCall(m_post_context->setInputShape(tensor_name, dims), std::string("setInputShape(post:") + tensor_name + ")");
         }
+        return true;
     };
 
     maybeSetShape("features_left_04", featureLeft04Dims);
@@ -238,7 +263,9 @@ void FastFoundationStereoEstimator::loadEngine(const std::string& featureEngineP
     resolvedGwcVolumeDims.d[3] = resolvedGwcVolumeDims.d[3] > 0 ? resolvedGwcVolumeDims.d[3] : m_featureH4;
     resolvedGwcVolumeDims.d[4] = resolvedGwcVolumeDims.d[4] > 0 ? resolvedGwcVolumeDims.d[4] : m_featureW4;
     ValidateStaticOrResolvedShape("gwc_volume", gwcVolumeDims, resolvedGwcVolumeDims);
-    maybeSetShape("gwc_volume", resolvedGwcVolumeDims);
+    if (!maybeSetShape("gwc_volume", resolvedGwcVolumeDims)) {
+        throw std::runtime_error("Post engine does not expose required tensor 'gwc_volume'.");
+    }
 
     m_gwcGroups = resolvedGwcVolumeDims.d[1];
     m_maxDispQuarter = resolvedGwcVolumeDims.d[2];
@@ -299,7 +326,9 @@ void FastFoundationStereoEstimator::allocateBuffers() {
 
     checkTrtCall(m_post_context->setTensorAddress("features_left_04", m_dFeaturesLeft04->ptr), "setTensorAddress(post:features_left_04)");
     checkTrtCall(m_post_context->setTensorAddress("features_left_08", m_dFeaturesLeft08->ptr), "setTensorAddress(post:features_left_08)");
-    checkTrtCall(m_post_context->setTensorAddress("features_left_16", m_dFeaturesLeft16->ptr), "setTensorAddress(post:features_left_16)");
+    if (HasIOTensor(m_post_engine, "features_left_16")) {
+        checkTrtCall(m_post_context->setTensorAddress("features_left_16", m_dFeaturesLeft16->ptr), "setTensorAddress(post:features_left_16)");
+    }
     checkTrtCall(m_post_context->setTensorAddress("features_left_32", m_dFeaturesLeft32->ptr), "setTensorAddress(post:features_left_32)");
     checkTrtCall(m_post_context->setTensorAddress("features_right_04", m_dFeaturesRight04->ptr), "setTensorAddress(post:features_right_04)");
     checkTrtCall(m_post_context->setTensorAddress("stem_2x", m_dStem2x->ptr), "setTensorAddress(post:stem_2x)");
@@ -407,11 +436,18 @@ bool FastFoundationStereoEstimator::infer(const cv::Mat& leftImg, const cv::Mat&
     int H = m_featureH4;
     int W = m_featureW4;
 
+    const char* gwc_normalize_env = std::getenv("FFS_GWC_NORMALIZE");
+    const char* gwc_direction_env = std::getenv("FFS_GWC_DIRECTION");
+    const bool gwc_normalize =
+        gwc_normalize_env != nullptr && std::strcmp(gwc_normalize_env, "1") == 0;
+    const bool reverse_gwc_shift =
+        gwc_direction_env != nullptr && std::strcmp(gwc_direction_env, "right") == 0;
+
     LaunchGwcVolumeKernel(
         m_dFeaturesLeft04Half->as<half>(), 
         m_dFeaturesRight04Half->as<half>(), 
         m_dGwcVolume->as<half>(), 
-        B, C, H, W, m_maxDispQuarter, m_gwcGroups, false, m_stream
+        B, C, H, W, m_maxDispQuarter, m_gwcGroups, gwc_normalize, reverse_gwc_shift, m_stream
     );
 
     // 5. Post Processing Inference
