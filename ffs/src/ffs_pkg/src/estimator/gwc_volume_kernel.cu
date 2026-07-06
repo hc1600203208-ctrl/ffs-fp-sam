@@ -22,7 +22,8 @@ __global__ void preprocess_rgb_to_planar_kernel(
     int src_idx = (y * width + x) * 3;
     int area = width * height;
 
-    // OpenCV stores images in BGR interleaved order.
+    // The exported feature engine expects RGB CHW float values in the original
+    // 0..255 image range. OpenCV inputs are BGR interleaved.
     float b = static_cast<float>(src[src_idx + 0]);
     float g = static_cast<float>(src[src_idx + 1]);
     float r = static_cast<float>(src[src_idx + 2]);
@@ -32,8 +33,6 @@ __global__ void preprocess_rgb_to_planar_kernel(
     int dst_idx_g = area + dst_idx_r;
     int dst_idx_b = area * 2 + dst_idx_r;
 
-    // Convert, Scale, and Normalize
-    // If you don't want normalization, set means to 0 and stds to 1.
     dst[dst_idx_r] = (r * scale - meanR) / stdR;
     dst[dst_idx_g] = (g * scale - meanG) / stdG;
     dst[dst_idx_b] = (b * scale - meanB) / stdB;
@@ -47,13 +46,13 @@ void LaunchPreprocessKernel(
     dim3 block(16, 16);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
-    float scale = 1.0f / 255.0f;
-    float meanR = 0.485f;
-    float meanG = 0.456f;
-    float meanB = 0.406f;
-    float stdR = 0.229f;
-    float stdG = 0.224f;
-    float stdB = 0.225f;
+    float scale = 1.0f;
+    float meanR = 0.0f;
+    float meanG = 0.0f;
+    float meanB = 0.0f;
+    float stdR = 1.0f;
+    float stdG = 1.0f;
+    float stdB = 1.0f;
 
     const char* mode = std::getenv("FFS_PREPROCESS_MODE");
     if (mode != nullptr) {
@@ -65,6 +64,14 @@ void LaunchPreprocessKernel(
             scale = 1.0f / 255.0f;
             meanR = meanG = meanB = 0.0f;
             stdR = stdG = stdB = 1.0f;
+        } else if (std::strcmp(mode, "imagenet") == 0) {
+            scale = 1.0f / 255.0f;
+            meanR = 0.485f;
+            meanG = 0.456f;
+            meanB = 0.406f;
+            stdR = 0.229f;
+            stdG = 0.224f;
+            stdB = 0.225f;
         }
     }
 
@@ -125,10 +132,6 @@ __global__ void gwc_volume_kernel_simple(
             dot_product += __half2float(refimg_fea[ref_idx]) * __half2float(targetimg_fea[tgt_idx]);
         }
 
-        // Group-wise correlation is defined as the mean correlation inside each group.
-        dot_product /= static_cast<float>(C_g);
-
-        // Normalize
         if (normalize) {
             float ref_norm = 0.0f;
             float tgt_norm = 0.0f;
@@ -144,15 +147,7 @@ __global__ void gwc_volume_kernel_simple(
                 tgt_norm += tgt_val * tgt_val;
             }
             
-            ref_norm = sqrtf(ref_norm);
-            tgt_norm = sqrtf(tgt_norm);
-            const float epsilon = 1e-4f;
-            
-            if (ref_norm > epsilon && tgt_norm > epsilon) {
-                dot_product = dot_product / (ref_norm * tgt_norm);
-            } else {
-                dot_product = 0.0f;
-            }
+            dot_product = dot_product / (sqrtf(ref_norm) * sqrtf(tgt_norm) + 1e-5f);
         }
     }
     

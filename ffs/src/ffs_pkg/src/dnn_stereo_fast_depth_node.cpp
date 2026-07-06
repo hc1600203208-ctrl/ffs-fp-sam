@@ -90,6 +90,8 @@ PreparedImage PrepareStereoInput(const cv::Mat& input, int target_width, int tar
     result.resized_height = std::max(1, static_cast<int>(std::round(color.rows * result.scale)));
     result.pad_left = (target_width - result.resized_width) / 2;
     result.pad_top = (target_height - result.resized_height) / 2;
+    const int pad_right = target_width - result.resized_width - result.pad_left;
+    const int pad_bottom = target_height - result.resized_height - result.pad_top;
 
     cv::Mat resized;
     if (result.resized_width == color.cols && result.resized_height == color.rows) {
@@ -98,8 +100,14 @@ PreparedImage PrepareStereoInput(const cv::Mat& input, int target_width, int tar
         cv::resize(color, resized, cv::Size(result.resized_width, result.resized_height), 0.0, 0.0, cv::INTER_LINEAR);
     }
 
-    result.image = cv::Mat::zeros(target_height, target_width, resized.type());
-    resized.copyTo(result.image(cv::Rect(result.pad_left, result.pad_top, resized.cols, resized.rows)));
+    cv::copyMakeBorder(
+        resized,
+        result.image,
+        result.pad_top,
+        pad_bottom,
+        result.pad_left,
+        pad_right,
+        cv::BORDER_REPLICATE);
     return result;
 }
 
@@ -351,11 +359,11 @@ class DnnStereoFastDepthNode : public rclcpp::Node {
             return;
         }
 
-        cv_bridge::CvImageConstPtr left_cv_ptr;
-        cv_bridge::CvImageConstPtr right_cv_ptr;
+        cv_bridge::CvImagePtr left_cv_ptr;
+        cv_bridge::CvImagePtr right_cv_ptr;
         try {
-            left_cv_ptr = cv_bridge::toCvShare(left_msg, left_msg->encoding);
-            right_cv_ptr = cv_bridge::toCvShare(right_msg, right_msg->encoding);
+            left_cv_ptr = cv_bridge::toCvCopy(left_msg, sensor_msgs::image_encodings::BGR8);
+            right_cv_ptr = cv_bridge::toCvCopy(right_msg, sensor_msgs::image_encodings::BGR8);
         } catch (const std::exception& e) {
             RCLCPP_ERROR(get_logger(), "Failed to convert stereo images: %s", e.what());
             return;
