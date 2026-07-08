@@ -9,7 +9,8 @@ def generate_launch_description():
     launch_args = [
         DeclareLaunchArgument(
             "engine_file_path",
-            default_value='["/home/hc/weizi/ffs/model/feature_runner_fp16_5060.engine", "/home/hc/weizi/ffs/model/post_runner_fp16_5060.engine"]',
+            # default_value='["/home/hc/weizi/ffs/model/feature_runner_fp16_5060.engine", "/home/hc/weizi/ffs/model/post_runner_fp16_5060.engine"]',
+            default_value='["/home/hc/model/ffs/20-30-48/feature_runner.engine", "/home/hc/model/ffs/20-30-48/post_runner.engine"]',
             description="The absolute file path to the TensorRT engine files",
         ),
         DeclareLaunchArgument(
@@ -20,12 +21,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "dataset_root",
-            default_value="/home/hc/weizi/dataset/jrnew-blue",
+            default_value="/home/hc/weizi/dataset/shubiao",
             description="Root directory of the offline stereo dataset",
         ),
         DeclareLaunchArgument(
             "left_subdir",
-            default_value="rgb",
+            default_value="camera1",
             description="Left image subdirectory under dataset_root",
         ),
         DeclareLaunchArgument(
