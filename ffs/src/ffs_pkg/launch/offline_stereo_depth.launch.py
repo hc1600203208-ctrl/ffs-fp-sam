@@ -20,12 +20,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "dataset_root",
-            default_value="/home/hc/weizi/dataset/jrnew-blue",
+            default_value="/home/hc/dataset/blue-fast0.25",
             description="Root directory of the offline stereo dataset",
         ),
         DeclareLaunchArgument(
             "left_subdir",
-            default_value="rgb",
+            default_value="camera1",
             description="Left image subdirectory under dataset_root",
         ),
         DeclareLaunchArgument(
