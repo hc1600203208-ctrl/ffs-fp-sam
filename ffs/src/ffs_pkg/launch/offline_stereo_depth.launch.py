@@ -25,7 +25,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "left_subdir",
-            default_value="camera1",
+            default_value="rgb",
             description="Left image subdirectory under dataset_root",
         ),
         DeclareLaunchArgument(
