@@ -1,8 +1,8 @@
 foundationpose_tracker_node:
   ros__parameters:
-    refiner_engine_path: /home/hc/weizi/fp/models/refiner_hwc_dynamic_fp16_5060.engine
-    scorer_engine_path: /home/hc/weizi/fp/models/scorer_hwc_dynamic_fp16_5060.engine
-    mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
+    refiner_engine_path: /home/bit/ffs+fp+sam/fp/models/refiner_hwc_dynamic_fp16_thor.engine
+    scorer_engine_path: /home/bit/ffs+fp+sam/fp/models/scorer_hwc_dynamic_fp16_thor.engine
+    mesh_path: /home/bit/dataset/jrnew-blue/mesh/textured_mesh.obj
     object_name: blue carton
 
     rgb_topic: /left/image_raw

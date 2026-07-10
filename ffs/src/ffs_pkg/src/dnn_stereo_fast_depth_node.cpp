@@ -441,7 +441,7 @@ class DnnStereoFastDepthNode : public rclcpp::Node {
 
         const auto end = std::chrono::high_resolution_clock::now();
         const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-        RCLCPP_DEBUG(get_logger(), "Depth-only stereo frame processed in %ld ms.", total_ms);
+        RCLCPP_INFO(get_logger(), "Depth-only stereo frame processed in %ld ms.", total_ms);
     }
 
     rclcpp::QoS image_qos_profile_;
