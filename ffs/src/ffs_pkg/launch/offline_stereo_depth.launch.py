@@ -21,7 +21,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "dataset_root",
-            default_value="/home/hc/weizi/dataset/shubiao",
+            default_value="/home/hc/dataset/blue-fast0.25",
             description="Root directory of the offline stereo dataset",
         ),
         DeclareLaunchArgument(
