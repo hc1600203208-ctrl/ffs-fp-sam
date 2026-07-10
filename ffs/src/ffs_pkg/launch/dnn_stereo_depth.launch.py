@@ -32,7 +32,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'engine_file_path',
             # default_value='["/home/hc/weizi/ffs/model/feature_runner_fp16_5060.engine", "/home/hc/weizi/ffs/model/post_runner_fp16_5060.engine"]',
-            default_value='["/home/hc/model/ffs/20-30-48/feature_runner.engine", "/home/hc/model/ffs/20-30-48/post_runner.engine"]',
+            default_value='["/home/bit/model/ffs/20-30-48/feature_runner_thor.engine", "/home/bit/model/ffs/20-30-48/post_runner_thor.engine"]',
             description='The absolute file path to the TensorRT engine file'),
         DeclareLaunchArgument(
             'model_type',
