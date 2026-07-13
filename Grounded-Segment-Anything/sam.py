@@ -118,29 +118,29 @@ def save_mask_data(output_dir, mask_list, box_list, label_list):
         mask_img[mask_np] = value + idx + 1
         binary_mask[mask_np] = 255
 
-    mask_path = os.path.join(output_dir, 'mask.png')
+    mask_path = os.path.join(output_dir, '0001.png')
     if not cv2.imwrite(mask_path, binary_mask):
         raise RuntimeError(f"Failed to write mask image: {mask_path}")
     legacy_mask_path = os.path.join(output_dir, 'mask.jpg')
     if os.path.exists(legacy_mask_path):
         os.remove(legacy_mask_path)
 
-    json_data = [{
-        'value': value,
-        'label': 'background'
-    }]
-    for label, box in zip(label_list, box_list):
-        value += 1
-        name, logit = label.split('(')
-        logit = logit[:-1] # the last is ')'
-        json_data.append({
-            'value': value,
-            'label': name,
-            'logit': float(logit),
-            'box': box.numpy().tolist(),
-        })
-    with open(os.path.join(output_dir, 'mask.json'), 'w') as f:
-        json.dump(json_data, f)
+    # json_data = [{
+    #     'value': value,
+    #     'label': 'background'
+    # }]
+    # for label, box in zip(label_list, box_list):
+    #     value += 1
+    #     name, logit = label.split('(')
+    #     logit = logit[:-1] # the last is ')'
+    #     json_data.append({
+    #         'value': value,
+    #         'label': name,
+    #         'logit': float(logit),
+    #         'box': box.numpy().tolist(),
+    #     })
+    # with open(os.path.join(output_dir, 'mask.json'), 'w') as f:
+    #     json.dump(json_data, f)
 
 
 if __name__ == "__main__":
@@ -198,7 +198,7 @@ if __name__ == "__main__":
     model = load_model(config_file, grounded_checkpoint, bert_base_uncased_path, device=device)
 
     # visualize raw image
-    image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
+    # image_pil.save(os.path.join(output_dir, "raw_image.jpg"))
 
     # run grounding dino model
     boxes_filt, pred_phrases = get_grounding_output(
@@ -232,17 +232,17 @@ if __name__ == "__main__":
     )
 
     # draw output image
-    plt.figure(figsize=(10, 10))
-    plt.imshow(image)
-    for mask in masks:
-        show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-    for box, label in zip(boxes_filt, pred_phrases):
-        show_box(box.numpy(), plt.gca(), label)
+    # plt.figure(figsize=(10, 10))
+    # plt.imshow(image)
+    # for mask in masks:
+    #     show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
+    # for box, label in zip(boxes_filt, pred_phrases):
+    #     show_box(box.numpy(), plt.gca(), label)
 
-    plt.axis('off')
-    plt.savefig(
-        os.path.join(output_dir, "grounded_sam_output.jpg"),
-        bbox_inches="tight", dpi=300, pad_inches=0.0
-    )
+    # plt.axis('off')
+    # plt.savefig(
+    #     os.path.join(output_dir, "grounded_sam_output.jpg"),
+    #     bbox_inches="tight", dpi=300, pad_inches=0.0
+    # )
 
     save_mask_data(output_dir, masks, boxes_filt, pred_phrases)

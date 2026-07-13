@@ -152,6 +152,21 @@ set_target_properties(offline_stereo_depth_node PROPERTIES
   BUILD_RPATH "$ORIGIN"
   INSTALL_RPATH "$ORIGIN;${TENSORRT_LIBRARY_DIR}")
 
+cuda_add_executable(offline_depth_benchmark_node
+  src/benchmark/offline_depth_benchmark_node.cpp
+  src/depth_confidence.cpp
+)
+ament_target_dependencies(offline_depth_benchmark_node
+  rclcpp
+  CUDA OpenCV
+  sensor_msgs
+  std_msgs
+)
+target_link_libraries(offline_depth_benchmark_node stereo_estimator)
+set_target_properties(offline_depth_benchmark_node PROPERTIES
+  BUILD_RPATH "$ORIGIN"
+  INSTALL_RPATH "$ORIGIN;${TENSORRT_LIBRARY_DIR}")
+
 add_executable(disparity2depth_node
   src/disparity_to_pc_node.cpp
   src/depth_confidence.cpp
@@ -191,6 +206,7 @@ install(TARGETS
   dnn_stereo_rectified_depth_node
   dnn_stereo_fast_depth_node
   offline_stereo_depth_node
+  offline_depth_benchmark_node
   disparity2depth_node
   DESTINATION lib/${PROJECT_NAME})
 

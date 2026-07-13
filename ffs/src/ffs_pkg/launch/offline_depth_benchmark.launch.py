@@ -10,17 +10,17 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "engine_file_path",
             default_value='["/home/hc/model/ffs/23-36-37/feature_runner_fp16_5060.engine", "/home/hc/model/ffs/23-36-37/post_runner_fp16_5060.engine"]',
-            description="The absolute file path to the TensorRT engine files",
+            description="Absolute file paths to the TensorRT engine files",
         ),
         DeclareLaunchArgument(
             "model_type",
             default_value="FAST_FOUNDATION_STEREO",
             choices=["FAST_FOUNDATION_STEREO"],
-            description="Model type",
+            description="Stereo model type",
         ),
         DeclareLaunchArgument(
             "dataset_root",
-            default_value="/home/hc/dataset/blue/blue714",
+            default_value="/home/hc/weizi/dataset/jrnew-blue",
             description="Root directory of the offline stereo dataset",
         ),
         DeclareLaunchArgument(
@@ -34,24 +34,14 @@ def generate_launch_description():
             description="Right image subdirectory under dataset_root",
         ),
         DeclareLaunchArgument(
-            "output_subdir",
-            default_value="depth_fliter",
-            description="Output depth subdirectory under dataset_root",
-        ),
-        DeclareLaunchArgument(
-            "raw_depth_subdir",
-            default_value="depth",
-            description="Output directory for raw depth maps before confidence filtering; relative paths are resolved under dataset_root",
-        ),
-        DeclareLaunchArgument(
-            "vis_subdir",
-            default_value="vis",
-            description="Output directory for colorized depth visualization images; relative paths are resolved under dataset_root",
-        ),
-        DeclareLaunchArgument(
             "caminfo_path",
             default_value="/home/hc/weizi/dataset/jrnew-blue/caminfo.txt",
             description="Path to stereo calibration txt file",
+        ),
+        DeclareLaunchArgument(
+            "output_root",
+            default_value="/home/hc/weizi/dataset/jrnew-blue/depth_benchmark",
+            description="Root directory for benchmark result groups",
         ),
         DeclareLaunchArgument(
             "input_image_width",
@@ -66,12 +56,12 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "model_input_width",
             default_value="640",
-            description="The model input width",
+            description="Model input width",
         ),
         DeclareLaunchArgument(
             "model_input_height",
             default_value="448",
-            description="The model input height",
+            description="Model input height",
         ),
         DeclareLaunchArgument(
             "min_depth_meters",
@@ -91,14 +81,54 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "save_input_resolution",
             default_value="true",
-            description="Whether to restore depth maps to the original input resolution before saving",
+            description="Whether to align depth maps back to the original left image before saving",
+        ),
+        DeclareLaunchArgument(
+            "max_pairs",
+            default_value="1000",
+            description="Maximum number of stereo pairs to process; 0 means all pairs",
+        ),
+        DeclareLaunchArgument(
+            "median_kernel_size",
+            default_value="5",
+            description="Median filter kernel size for the baseline group",
+        ),
+        DeclareLaunchArgument(
+            "bilateral_d",
+            default_value="5",
+            description="Bilateral filter diameter for the baseline group",
+        ),
+        DeclareLaunchArgument(
+            "bilateral_sigma_color",
+            default_value="0.05",
+            description="Bilateral filter sigmaColor for metric depth",
+        ),
+        DeclareLaunchArgument(
+            "bilateral_sigma_space",
+            default_value="5.0",
+            description="Bilateral filter sigmaSpace for metric depth",
+        ),
+        DeclareLaunchArgument(
+            "use_temporal_confidence",
+            default_value="true",
+            description="Whether confidence_full uses C_tmp when a previous frame is available",
+        ),
+        DeclareLaunchArgument(
+            "conf_threshold",
+            default_value="0.35",
+            description="Default confidence threshold for groups D-G",
+        ),
+        DeclareLaunchArgument(
+            "threshold_sweep",
+            default_value="0.20,0.30,0.35,0.40,0.50",
+            description="Comma-separated threshold values for confidence_full_threshold_sweep",
         ),
     ]
 
-    offline_node = Node(
+    benchmark_node = Node(
         package="fast_foundation_stereo",
-        executable="offline_stereo_depth_node",
-        name="offline_stereo_depth_node",
+        executable="offline_depth_benchmark_node",
+        name="offline_depth_benchmark_node",
         output="screen",
         parameters=[
             {"model_type": LaunchConfiguration("model_type")},
@@ -106,10 +136,8 @@ def generate_launch_description():
             {"dataset_root": LaunchConfiguration("dataset_root")},
             {"left_subdir": LaunchConfiguration("left_subdir")},
             {"right_subdir": LaunchConfiguration("right_subdir")},
-            {"output_subdir": LaunchConfiguration("output_subdir")},
-            {"raw_depth_subdir": LaunchConfiguration("raw_depth_subdir")},
-            {"vis_subdir": LaunchConfiguration("vis_subdir")},
             {"caminfo_path": LaunchConfiguration("caminfo_path")},
+            {"output_root": LaunchConfiguration("output_root")},
             {"input_image_width": LaunchConfiguration("input_image_width")},
             {"input_image_height": LaunchConfiguration("input_image_height")},
             {"model_input_width": LaunchConfiguration("model_input_width")},
@@ -118,7 +146,15 @@ def generate_launch_description():
             {"max_depth_meters": LaunchConfiguration("max_depth_meters")},
             {"depth_scale": LaunchConfiguration("depth_scale")},
             {"save_input_resolution": LaunchConfiguration("save_input_resolution")},
+            {"max_pairs": LaunchConfiguration("max_pairs")},
+            {"median_kernel_size": LaunchConfiguration("median_kernel_size")},
+            {"bilateral_d": LaunchConfiguration("bilateral_d")},
+            {"bilateral_sigma_color": LaunchConfiguration("bilateral_sigma_color")},
+            {"bilateral_sigma_space": LaunchConfiguration("bilateral_sigma_space")},
+            {"use_temporal_confidence": LaunchConfiguration("use_temporal_confidence")},
+            {"conf_threshold": LaunchConfiguration("conf_threshold")},
+            {"threshold_sweep": LaunchConfiguration("threshold_sweep")},
         ],
     )
 
-    return launch.LaunchDescription(launch_args + [offline_node])
+    return launch.LaunchDescription(launch_args + [benchmark_node])
