@@ -439,7 +439,7 @@ void Draw3DBoundingBox(const Eigen::Matrix3f &intrinsic,
                                                   {0, 4}, {1, 5}, {2, 6}, {3, 7}};
   for (const auto &edge : edges)
   {
-    cv::line(image, image_points[edge.first], image_points[edge.second], cv::Scalar(0, 255, 0), 2);
+    // cv::line(image, image_points[edge.first], image_points[edge.second], cv::Scalar(0, 255, 0), 2);
   }
 
   const Eigen::Vector4f center = pose * Eigen::Vector4f(0.0F, 0.0F, 0.0F, 1.0F);
@@ -451,10 +451,10 @@ void Draw3DBoundingBox(const Eigen::Matrix3f &intrinsic,
   const float axis_length = (dimension(0) + dimension(1) + dimension(2)) / 6.0F;
   const std::vector<Eigen::Vector4f> axis_end_points = {
       pose * Eigen::Vector4f(axis_length, 0.0F, 0.0F, 1.0F),
-      pose * Eigen::Vector4f(0.0F, axis_length, 0.0F, 1.0F),
-      pose * Eigen::Vector4f(0.0F, 0.0F, axis_length, 1.0F)};
+      pose * Eigen::Vector4f(0.0F, 0.0F, axis_length, 1.0F),
+      pose * Eigen::Vector4f(0.0F, axis_length, 0.0F, 1.0F)};
   const std::vector<cv::Scalar> axis_colors = {
-      cv::Scalar(0, 0, 255), cv::Scalar(0, 255, 0), cv::Scalar(255, 0, 0)};
+      cv::Scalar(0, 0, 255), cv::Scalar(255, 0, 0), cv::Scalar(0, 255, 0)};
 
   const cv::Point center_pt(intrinsic(0, 0) * (center(0) / center(2)) + intrinsic(0, 2),
                             intrinsic(1, 1) * (center(1) / center(2)) + intrinsic(1, 2));
@@ -702,7 +702,7 @@ private:
 
     if (save_frame_outputs_)
     {
-      std::filesystem::create_directories(std::filesystem::path(frame_output_dir_) / "visualizations");
+      std::filesystem::create_directories(std::filesystem::path(frame_output_dir_) / "visualization");
       pose_output_path_ = (std::filesystem::path(frame_output_dir_) / "poses.csv").string();
       pose_output_stream_.open(pose_output_path_, std::ios::out | std::ios::trunc);
       if (!pose_output_stream_.is_open())
@@ -952,7 +952,7 @@ private:
     const size_t      frame_index = saved_frame_index_++;
     const std::string frame_stem  = NextFrameStemFromIndex(frame_index);
     const auto        visualization_path =
-        std::filesystem::path(frame_output_dir_) / "visualizations" / (frame_stem + ".png");
+        std::filesystem::path(frame_output_dir_) / "visualization" / (frame_stem + ".png");
 
     const cv::Mat visualization_bgr = BuildPoseVisualizationBgr(rgb, pose);
     if (!cv::imwrite(visualization_path.string(), visualization_bgr))
