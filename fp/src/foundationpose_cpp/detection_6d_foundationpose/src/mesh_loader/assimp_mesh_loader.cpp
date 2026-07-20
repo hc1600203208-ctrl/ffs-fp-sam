@@ -3,7 +3,9 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
+#include <cmath>
 #include <filesystem>
+#include <fstream>
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -12,6 +14,7 @@
 #include <glog/log_severity.h>
 
 namespace detection_6d {
+namespace fs = std::filesystem;
 
 static std::pair<Eigen::Vector3f, Eigen::Vector3f> FindMinMaxVertex(const aiMesh *mesh)
 {
@@ -118,6 +121,94 @@ static void ComputeOBB(const aiMesh    *mesh,
   out_dimension   = dimension;
 }
 
+static bool LoadMatrix4f(const fs::path &path, Eigen::Matrix4f &out_matrix)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    return false;
+  }
+
+  for (int row = 0; row < 4; ++row)
+  {
+    for (int col = 0; col < 4; ++col)
+    {
+      if (!(file >> out_matrix(row, col)))
+      {
+        throw std::runtime_error("[AssimpMeshLoader] Failed to parse matrix file: " +
+                                 path.string());
+      }
+    }
+  }
+
+  if (!out_matrix.allFinite() || std::abs(out_matrix.determinant()) < 1e-8F)
+  {
+    throw std::runtime_error("[AssimpMeshLoader] Invalid oriented bounds matrix: " +
+                             path.string());
+  }
+  return true;
+}
+
+static bool LoadVector3f(const fs::path &path, Eigen::Vector3f &out_vector)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    return false;
+  }
+
+  for (int idx = 0; idx < 3; ++idx)
+  {
+    if (!(file >> out_vector(idx)))
+    {
+      throw std::runtime_error("[AssimpMeshLoader] Failed to parse vector file: " +
+                               path.string());
+    }
+  }
+
+  if (!out_vector.allFinite() || (out_vector.array() <= 0.0F).any())
+  {
+    throw std::runtime_error("[AssimpMeshLoader] Invalid oriented bounds extents: " +
+                             path.string());
+  }
+  return true;
+}
+
+static bool LoadTrimeshOrientedBounds(const fs::path &mesh_dir,
+                                      Eigen::Matrix4f &out_orient_bbox,
+                                      Eigen::Vector3f &out_dimension)
+{
+  const fs::path to_origin_path = mesh_dir / "to_origin.txt";
+  const fs::path extents_path   = mesh_dir / "extents.txt";
+  const bool     has_to_origin  = fs::exists(to_origin_path);
+  const bool     has_extents    = fs::exists(extents_path);
+
+  if (!has_to_origin && !has_extents)
+  {
+    return false;
+  }
+
+  if (has_to_origin != has_extents)
+  {
+    LOG(WARNING) << "[AssimpMeshLoader] Found only one trimesh oriented-bounds sidecar in "
+                 << mesh_dir.string() << ". Falling back to PCA OBB.";
+    return false;
+  }
+
+  Eigen::Matrix4f to_origin = Eigen::Matrix4f::Identity();
+  Eigen::Vector3f extents   = Eigen::Vector3f::Zero();
+  if (!LoadMatrix4f(to_origin_path, to_origin) || !LoadVector3f(extents_path, extents))
+  {
+    return false;
+  }
+
+  out_orient_bbox = to_origin.inverse();
+  out_dimension   = extents;
+  LOG(INFO) << "[AssimpMeshLoader] Loaded trimesh oriented bounds from " << to_origin_path
+            << " and " << extents_path;
+  return true;
+}
+
 class AssimpMeshLoader : public BaseMeshLoader {
 public:
   AssimpMeshLoader(const std::string &name, const std::string &mesh_file_path);
@@ -180,7 +271,11 @@ AssimpMeshLoader::AssimpMeshLoader(const std::string &name, const std::string &m
 
   const aiMesh *mesh = scene->mMeshes[0];
   mesh_diamter_      = CalcMeshDiameter(mesh);
-  ComputeOBB(mesh, obb_, dim_);
+  if (!LoadTrimeshOrientedBounds(fs::path(mesh_file_path).parent_path(), obb_, dim_))
+  {
+    ComputeOBB(mesh, obb_, dim_);
+    LOG(INFO) << "[AssimpMeshLoader] Using PCA fallback oriented bounds.";
+  }
   auto min_max_vertex = FindMinMaxVertex(mesh);
   mesh_center_        = (min_max_vertex.second + min_max_vertex.first) / 2.0;
 

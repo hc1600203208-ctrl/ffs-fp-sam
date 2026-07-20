@@ -19,6 +19,11 @@ The published pose is the object pose in the camera frame, expressed in the orig
 coordinate frame. This matches the pose matrices saved by the official Python FoundationPose
 demo under `debug/ob_in_cam`.
 
+For visualization parity with the official Python demo, place `to_origin.txt` and `extents.txt`
+next to the mesh file. These files should be exported from `trimesh.bounds.oriented_bounds(mesh)`;
+the helper script `tools/export_trimesh_oriented_bounds.py` writes them using the same convention.
+When the files are absent, the C++ loader falls back to its internal PCA oriented box.
+
 ## Build
 
 ```bash
