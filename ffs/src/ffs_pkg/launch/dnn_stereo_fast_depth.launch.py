@@ -10,7 +10,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'engine_file_path',
             # default_value='["/home/hc/weizi/ffs/model/feature_runner_fp16_5060.engine", "/home/hc/weizi/ffs/model/post_runner_fp16_5060.engine"]',
-             default_value='["/home/bit/model/ffs/20-30-48/feature_runner_fp16_thor.engine", "/home/bit/model/ffs/20-30-48/post_runner_fp16_thor.engine"]',
+             default_value='["/home/bit/model/ffs/20-30-48/320-512/feature_runner_fp16_thor.engine", "/home/bit/model/ffs/20-30-48/320-512/post_runner_fp16_thor.engine"]',
             description='Absolute paths to the TensorRT engine files'),
         DeclareLaunchArgument(
             'model_type',
@@ -19,11 +19,11 @@ def generate_launch_description():
             description='Stereo model type'),
         DeclareLaunchArgument(
             'model_input_width',
-            default_value='640',
+            default_value='512',
             description='Model input width'),
         DeclareLaunchArgument(
             'model_input_height',
-            default_value='448',
+            default_value='320',
             description='Model input height'),
         DeclareLaunchArgument(
             'min_depth_meters',
@@ -43,7 +43,7 @@ def generate_launch_description():
             description='Approximate stereo synchronizer queue size'),
         DeclareLaunchArgument(
             'caminfo_path',
-            default_value='jrnew.txt',
+            default_value='640.txt',
             description='Path to stereo calibration txt file'),
         DeclareLaunchArgument(
             'left_image_topic',

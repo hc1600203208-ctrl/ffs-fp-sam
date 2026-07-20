@@ -4,6 +4,7 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -21,6 +22,8 @@ def generate_launch_description():
     box_threshold = LaunchConfiguration("box_threshold")
     text_threshold = LaunchConfiguration("text_threshold")
     bert_base_uncased_path = LaunchConfiguration("bert_base_uncased_path")
+    save_frame_outputs = LaunchConfiguration("save_frame_outputs")
+    frame_output_dir = LaunchConfiguration("frame_output_dir")
     run_first_mask_with_conda = PythonExpression(
         ["'", run_first_mask, "' == 'true' and '", use_conda_for_first_mask, "' == 'true'"]
     )
@@ -50,8 +53,18 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("first_mask_output_name", default_value="first_mask.png"),
         DeclareLaunchArgument("text_prompt", default_value="blue object"),
-        DeclareLaunchArgument("box_threshold", default_value="0.5"),
+        DeclareLaunchArgument("box_threshold", default_value="0.7"),
         DeclareLaunchArgument("text_threshold", default_value="0.4"),
+        DeclareLaunchArgument(
+            "save_frame_outputs",
+            default_value="true",
+            description="Save each successful pose output and its pose visualization frame.",
+        ),
+        DeclareLaunchArgument(
+            "frame_output_dir",
+            default_value="/home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs",
+            description="Directory for per-frame fast tracker visualization images and poses.csv.",
+        ),
         DeclareLaunchArgument(
             "bert_base_uncased_path",
             default_value="/home/bit/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594",
@@ -107,7 +120,13 @@ def generate_launch_description():
         executable="foundationpose_stereo_tracker_fast_node",
         name="foundationpose_stereo_tracker_fast_node",
         output="screen",
-        parameters=[params_file],
+        parameters=[
+            params_file,
+            {
+                "save_frame_outputs": ParameterValue(save_frame_outputs, value_type=bool),
+                "frame_output_dir": frame_output_dir,
+            },
+        ],
     )
 
     return launch.LaunchDescription(launch_args + [first_mask_conda_process, first_mask_python_process, tracker_node])
