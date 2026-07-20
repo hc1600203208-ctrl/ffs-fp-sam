@@ -222,7 +222,8 @@ bool FoundationPose::Register(const cv::Mat     &rgb,
   MESSURE_DURATION_AND_CHECK_STATE(ScorePostProcess(package),
                                    "[FoundationPose] SyncDetect Failed to execute PostProcess!!!");
 
-  out_pose_in_mesh = std::move(package->actual_pose);
+  const auto &mesh_loader = map_name2loaders_[target_name];
+  out_pose_in_mesh        = ConvertPoseCenteredMesh2Mesh(package->actual_pose, mesh_loader);
 
   return true;
 }
@@ -240,8 +241,9 @@ bool FoundationPose::Track(const cv::Mat         &rgb,
   auto package           = std::make_unique<FoundationPosePipelinePackage>();
   package->rgb_on_host   = rgb;
   package->depth_on_host = depth;
-  package->target_name   = target_name;
-  package->hyp_poses     = {hyp_pose_in_mesh};
+  const auto &mesh_loader = map_name2loaders_[target_name];
+  package->target_name    = target_name;
+  package->hyp_poses      = {ConvertPoseMesh2CenteredMesh(hyp_pose_in_mesh, mesh_loader)};
   // 将数据传输至device端，并生成xyz_map数据
   MESSURE_DURATION_AND_CHECK_STATE(UploadDataToDevice(rgb, depth, cv::Mat(), package),
                                    "[FoundationPose] Track Failed to upload data!!!");
@@ -259,7 +261,7 @@ bool FoundationPose::Track(const cv::Mat         &rgb,
                                      "[Foundation] Track Failed to execute `RefinePostProcess`!!!");
   }
 
-  out_pose_in_mesh = std::move(package->hyp_poses[0]);
+  out_pose_in_mesh = ConvertPoseCenteredMesh2Mesh(package->hyp_poses[0], mesh_loader);
 
   return true;
 }

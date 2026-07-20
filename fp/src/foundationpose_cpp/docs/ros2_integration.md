@@ -15,8 +15,9 @@ For pure offline processing, the repository also provides `foundationpose_offlin
 This node reads a local RGB-D sequence directly from disk, runs first-frame `Register` followed
 by per-frame `Track`, and writes pose CSV results plus visualization images/video.
 
-The published pose is the object pose in the camera frame, and the pose matrix follows the
-existing mesh-frame convention used by the C++ FoundationPose library.
+The published pose is the object pose in the camera frame, expressed in the original mesh
+coordinate frame. This matches the pose matrices saved by the official Python FoundationPose
+demo under `debug/ob_in_cam`.
 
 ## Build
 

@@ -7,7 +7,7 @@ This project is adapted from [nvidia-issac-pose-estimation](https://github.com/N
 
 ## Update LOG
 
-**[2025.04]** Decoupled `Register` and `Track` processes; Output poses under mesh coordinates, providing `mesh_loader` interfaces for external extension. Related [PR](https://github.com/zz990099/foundationpose_cpp/pull/21).
+**[2025.04]** Decoupled `Register` and `Track` processes; Output poses under original mesh coordinates, providing `mesh_loader` interfaces for external extension. Related [PR](https://github.com/zz990099/foundationpose_cpp/pull/21).
 
 **[2025.03]** Aligned rendering process with the original Python implementation, supporting rendering without texture input. Related [PR](https://github.com/zz990099/foundationpose_cpp/pull/13).
 

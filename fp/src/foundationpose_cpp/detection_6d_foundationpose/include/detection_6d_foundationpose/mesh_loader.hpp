@@ -49,8 +49,8 @@ public:
   virtual const Eigen::Vector3f &GetMeshModelCenter() const noexcept = 0;
 
   /**
-   * @brief Get orientation bounds transformation matrix
-   * @return 4x4 matrix containing axis-aligned bounding box orientation
+   * @brief Get oriented bounding box transform
+   * @return 4x4 transform from oriented bounding box coordinates to original mesh coordinates
    */
   virtual const Eigen::Matrix4f &GetOrientBounds() const noexcept = 0;
 
@@ -62,22 +62,57 @@ public:
 };
 
 /**
- * @brief Convert pose from mesh coordinate frame to bounding box frame
+ * @brief Convert pose from original mesh coordinate frame to centered mesh coordinate frame
  *
- * @param pose_in_mesh Input pose in mesh coordinate system
+ * FoundationPose renders a copy of the mesh whose vertices are shifted by -model_center.
+ * Python FoundationPose keeps that pose internally, but returns pose @ T(-model_center).
+ * This helper performs the inverse conversion for callers that provide the returned,
+ * original-mesh pose as a tracking hypothesis.
+ *
+ * @param pose_in_mesh Input pose in original mesh coordinate system
+ * @param mesh_loader Mesh loader containing transformation parameters
+ * @return Pose in centered mesh coordinate system used internally by the renderer/refiner
+ */
+inline Eigen::Matrix4f ConvertPoseMesh2CenteredMesh(
+    const Eigen::Matrix4f                 &pose_in_mesh,
+    const std::shared_ptr<BaseMeshLoader> &mesh_loader)
+{
+  Eigen::Matrix4f tf_to_centered_mesh   = Eigen::Matrix4f::Identity();
+  tf_to_centered_mesh.block<3, 1>(0, 3) = mesh_loader->GetMeshModelCenter();
+  return pose_in_mesh * tf_to_centered_mesh;
+}
+
+/**
+ * @brief Convert pose from centered mesh coordinate frame to original mesh coordinate frame
+ *
+ * @param pose_in_centered_mesh Input pose in centered mesh coordinate system
+ * @param mesh_loader Mesh loader containing transformation parameters
+ * @return Pose in original mesh coordinate system, matching official Python FoundationPose output
+ */
+inline Eigen::Matrix4f ConvertPoseCenteredMesh2Mesh(
+    const Eigen::Matrix4f                 &pose_in_centered_mesh,
+    const std::shared_ptr<BaseMeshLoader> &mesh_loader)
+{
+  Eigen::Matrix4f tf_to_mesh   = Eigen::Matrix4f::Identity();
+  tf_to_mesh.block<3, 1>(0, 3) = -mesh_loader->GetMeshModelCenter();
+  return pose_in_centered_mesh * tf_to_mesh;
+}
+
+/**
+ * @brief Convert pose from original mesh coordinate frame to bounding box frame
+ *
+ * @param pose_in_mesh Input pose in original mesh coordinate system
  * @param mesh_loader Mesh loader containing transformation parameters
  * @return Transformed pose in bounding box coordinate system
  *
  * @note Transformation formula:
- *       T_bbox = T_mesh * T_center * T_orient
- *       Where T_center translates to mesh center, T_orient aligns with bounds
+ *       T_bbox = T_mesh * T_orient
+ *       Where T_orient maps the oriented bounding box coordinates to original mesh coordinates.
  */
 inline Eigen::Matrix4f ConvertPoseMesh2BBox(const Eigen::Matrix4f                 &pose_in_mesh,
                                             const std::shared_ptr<BaseMeshLoader> &mesh_loader)
 {
-  Eigen::Matrix4f tf_to_center   = Eigen::Matrix4f::Identity();
-  tf_to_center.block<3, 1>(0, 3) = -mesh_loader->GetMeshModelCenter();
-  return pose_in_mesh * tf_to_center * mesh_loader->GetOrientBounds();
+  return pose_in_mesh * mesh_loader->GetOrientBounds();
 }
 
 /**
