@@ -50,7 +50,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "caminfo_path",
-            default_value="/home/hc/weizi/dataset/jrnew-blue/caminfo.txt",
+            default_value="640.txt",
             description="Path to stereo calibration txt file",
         ),
         DeclareLaunchArgument(

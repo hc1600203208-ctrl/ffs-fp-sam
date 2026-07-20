@@ -5,10 +5,13 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <vector>
 
 #include <Eigen/Geometry>
@@ -38,6 +41,7 @@ namespace
 constexpr int kPoseBatchSize = 252;
 constexpr int kCropHeight    = 160;
 constexpr int kCropWidth     = 160;
+constexpr float kRadiansToDegrees = 57.29577951308232F;
 
 struct PreparedImage
 {
@@ -337,6 +341,64 @@ geometry_msgs::msg::PoseStamped PoseMatrixToPoseStamped(const Eigen::Matrix4f   
   return pose_msg;
 }
 
+Eigen::Vector3f RotationMatrixToRpyDegrees(const Eigen::Matrix3f &rotation)
+{
+  const float sy = std::sqrt(rotation(0, 0) * rotation(0, 0) +
+                             rotation(1, 0) * rotation(1, 0));
+  const bool singular = sy < 1e-6F;
+
+  float roll = 0.0F;
+  float pitch = 0.0F;
+  float yaw = 0.0F;
+  if (!singular)
+  {
+    roll = std::atan2(rotation(2, 1), rotation(2, 2));
+    pitch = std::atan2(-rotation(2, 0), sy);
+    yaw = std::atan2(rotation(1, 0), rotation(0, 0));
+  }
+  else
+  {
+    roll = std::atan2(-rotation(1, 2), rotation(1, 1));
+    pitch = std::atan2(-rotation(2, 0), sy);
+    yaw = 0.0F;
+  }
+
+  return Eigen::Vector3f(roll, pitch, yaw) * kRadiansToDegrees;
+}
+
+std::string PoseToCsvRow(size_t                      frame_index,
+                         const std::string          &mode,
+                         const std_msgs::msg::Header &header,
+                         const std::string          &visualization_path,
+                         const Eigen::Matrix4f      &pose,
+                         const Eigen::Vector3f      &rotation_rpy_degrees,
+                         const Eigen::Vector3f      &delta_rotation_rpy_degrees)
+{
+  Eigen::Quaternionf quat(pose.block<3, 3>(0, 0));
+  quat.normalize();
+
+  std::ostringstream stream;
+  stream.setf(std::ios::fixed);
+  stream.precision(8);
+  stream << frame_index << ',' << mode << ',' << header.stamp.sec << ',' << header.stamp.nanosec
+         << ',' << header.frame_id << ',' << visualization_path << ',' << pose(0, 3) << ','
+         << pose(1, 3) << ',' << pose(2, 3) << ',' << quat.x() << ',' << quat.y() << ','
+         << quat.z() << ',' << quat.w() << ',' << rotation_rpy_degrees(0) << ','
+         << rotation_rpy_degrees(1) << ',' << rotation_rpy_degrees(2) << ','
+         << delta_rotation_rpy_degrees(0) << ',' << delta_rotation_rpy_degrees(1) << ','
+         << delta_rotation_rpy_degrees(2);
+
+  for (int row = 0; row < 4; ++row)
+  {
+    for (int col = 0; col < 4; ++col)
+    {
+      stream << ',' << pose(row, col);
+    }
+  }
+
+  return stream.str();
+}
+
 void Draw3DBoundingBox(const Eigen::Matrix3f &intrinsic,
                        const Eigen::Matrix4f &pose,
                        const Eigen::Vector3f &dimension,
@@ -474,6 +536,9 @@ private:
     this->declare_parameter<std::string>("visualization_window_name", "foundationpose_visualization");
     this->declare_parameter<bool>("publish_visualization", false);
     this->declare_parameter<bool>("show_visualization_window", false);
+    this->declare_parameter<bool>("save_frame_outputs", false);
+    this->declare_parameter<std::string>("frame_output_dir",
+                                         "/home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs");
     this->declare_parameter<double>("fx", 0.0);
     this->declare_parameter<double>("fy", 0.0);
     this->declare_parameter<double>("cx", 0.0);
@@ -510,6 +575,8 @@ private:
     visualization_window_name_ = this->get_parameter("visualization_window_name").as_string();
     publish_visualization_ = this->get_parameter("publish_visualization").as_bool();
     show_visualization_window_ = this->get_parameter("show_visualization_window").as_bool();
+    save_frame_outputs_ = this->get_parameter("save_frame_outputs").as_bool();
+    frame_output_dir_ = this->get_parameter("frame_output_dir").as_string();
     mask_poll_interval_ms_ = this->get_parameter("mask_poll_interval_ms").as_int();
     resize_mask_to_input_  = this->get_parameter("resize_mask_to_input").as_bool();
     max_input_image_height_ = this->get_parameter("max_input_image_height").as_int();
@@ -538,6 +605,10 @@ private:
     {
       throw std::invalid_argument(
           "Set mask_image_path, or set both mask_image_directory and mask_image_name.");
+    }
+    if (save_frame_outputs_ && frame_output_dir_.empty())
+    {
+      throw std::invalid_argument("frame_output_dir must not be empty when save_frame_outputs is true.");
     }
   }
 
@@ -627,6 +698,26 @@ private:
     if (publish_visualization_)
     {
       visualization_pub_ = this->create_publisher<sensor_msgs::msg::Image>(visualization_topic_, 10);
+    }
+
+    if (save_frame_outputs_)
+    {
+      std::filesystem::create_directories(std::filesystem::path(frame_output_dir_) / "visualizations");
+      pose_output_path_ = (std::filesystem::path(frame_output_dir_) / "poses.csv").string();
+      pose_output_stream_.open(pose_output_path_, std::ios::out | std::ios::trunc);
+      if (!pose_output_stream_.is_open())
+      {
+        throw std::runtime_error("Failed to open fast tracker pose output file: " + pose_output_path_);
+      }
+
+      pose_output_stream_
+          << "frame_index,mode,stamp_sec,stamp_nanosec,frame_id,visualization_path,"
+             "tx,ty,tz,qx,qy,qz,qw,rot_x_deg,rot_y_deg,rot_z_deg,"
+             "delta_rot_x_deg,delta_rot_y_deg,delta_rot_z_deg,"
+             "m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33\n";
+      RCLCPP_INFO(this->get_logger(),
+                  "Saving per-frame pose and visualization outputs to: %s",
+                  frame_output_dir_.c_str());
     }
 
     left_image_sub_.subscribe(this, left_image_topic_, image_qos_profile_.get_rmw_qos_profile());
@@ -820,6 +911,7 @@ private:
     has_pose_  = true;
     last_pose_ = pose;
     PublishPose(header, last_pose_);
+    SaveFrameOutput(header, rgb, last_pose_, "register");
     PublishVisualization(header, rgb, last_pose_);
     RCLCPP_INFO(this->get_logger(), "Initial registration succeeded. Fast direct tracking started.");
   }
@@ -834,6 +926,7 @@ private:
 
     last_pose_ = pose;
     PublishPose(header, last_pose_);
+    SaveFrameOutput(header, rgb, last_pose_, "track");
     PublishVisualization(header, rgb, last_pose_);
   }
 
@@ -846,6 +939,81 @@ private:
     pose_pub_->publish(PoseMatrixToPoseStamped(pose, header));
   }
 
+  void SaveFrameOutput(const std_msgs::msg::Header &header,
+                       const cv::Mat               &rgb,
+                       const Eigen::Matrix4f       &pose,
+                       const std::string           &mode)
+  {
+    if (!save_frame_outputs_)
+    {
+      return;
+    }
+
+    const size_t      frame_index = saved_frame_index_++;
+    const std::string frame_stem  = NextFrameStemFromIndex(frame_index);
+    const auto        visualization_path =
+        std::filesystem::path(frame_output_dir_) / "visualizations" / (frame_stem + ".png");
+
+    const cv::Mat visualization_bgr = BuildPoseVisualizationBgr(rgb, pose);
+    if (!cv::imwrite(visualization_path.string(), visualization_bgr))
+    {
+      RCLCPP_ERROR_THROTTLE(this->get_logger(),
+                            *this->get_clock(),
+                            2000,
+                            "Failed to save pose visualization frame: %s",
+                            visualization_path.string().c_str());
+      return;
+    }
+
+    if (pose_output_stream_.is_open())
+    {
+      auto output_header = header;
+      if (!pose_frame_id_.empty())
+      {
+        output_header.frame_id = pose_frame_id_;
+      }
+
+      const Eigen::Vector3f rotation_rpy_degrees =
+          RotationMatrixToRpyDegrees(pose.block<3, 3>(0, 0));
+      Eigen::Vector3f delta_rotation_rpy_degrees = Eigen::Vector3f::Zero();
+      if (has_last_saved_pose_)
+      {
+        const Eigen::Matrix3f relative_rotation =
+            last_saved_pose_.block<3, 3>(0, 0).transpose() * pose.block<3, 3>(0, 0);
+        delta_rotation_rpy_degrees = RotationMatrixToRpyDegrees(relative_rotation);
+      }
+
+      pose_output_stream_ << PoseToCsvRow(frame_index,
+                                          mode,
+                                          output_header,
+                                          visualization_path.string(),
+                                          pose,
+                                          rotation_rpy_degrees,
+                                          delta_rotation_rpy_degrees)
+                          << '\n';
+      pose_output_stream_.flush();
+      last_saved_pose_ = pose;
+      has_last_saved_pose_ = true;
+    }
+  }
+
+  std::string NextFrameStemFromIndex(size_t frame_index) const
+  {
+    std::ostringstream stream;
+    stream << std::setw(6) << std::setfill('0') << frame_index;
+    return stream.str();
+  }
+
+  cv::Mat BuildPoseVisualizationBgr(const cv::Mat &rgb, const Eigen::Matrix4f &pose) const
+  {
+    cv::Mat visualization_bgr;
+    cv::cvtColor(rgb, visualization_bgr, cv::COLOR_RGB2BGR);
+
+    const auto draw_pose = detection_6d::ConvertPoseMesh2BBox(pose, mesh_loader_);
+    Draw3DBoundingBox(intrinsic_, draw_pose, mesh_loader_->GetObjectDimension(), visualization_bgr);
+    return visualization_bgr;
+  }
+
   void PublishVisualization(std_msgs::msg::Header header,
                             const cv::Mat        &rgb,
                             const Eigen::Matrix4f &pose)
@@ -855,11 +1023,7 @@ private:
       return;
     }
 
-    cv::Mat visualization_bgr;
-    cv::cvtColor(rgb, visualization_bgr, cv::COLOR_RGB2BGR);
-
-    const auto draw_pose = detection_6d::ConvertPoseMesh2BBox(pose, mesh_loader_);
-    Draw3DBoundingBox(intrinsic_, draw_pose, mesh_loader_->GetObjectDimension(), visualization_bgr);
+    cv::Mat visualization_bgr = BuildPoseVisualizationBgr(rgb, pose);
 
     if (publish_visualization_ && visualization_pub_ != nullptr)
     {
@@ -905,8 +1069,15 @@ private:
   bool   resize_mask_to_input_{false};
   bool   publish_visualization_{false};
   bool   show_visualization_window_{false};
+  bool   save_frame_outputs_{false};
   size_t register_refine_iters_{5};
   size_t track_refine_iters_{2};
+  size_t saved_frame_index_{0};
+  bool has_last_saved_pose_{false};
+  std::string frame_output_dir_;
+  std::string pose_output_path_;
+  std::ofstream pose_output_stream_;
+  Eigen::Matrix4f last_saved_pose_{Eigen::Matrix4f::Identity()};
 
   rclcpp::QoS image_qos_profile_;
   StereoCalibration       calibration_;
