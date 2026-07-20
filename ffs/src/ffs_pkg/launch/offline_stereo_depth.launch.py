@@ -35,12 +35,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "output_subdir",
-            default_value="depth",
+            default_value="depth_fliter",
             description="Output depth subdirectory under dataset_root",
         ),
         DeclareLaunchArgument(
             "raw_depth_subdir",
-            default_value="depth_raw",
+            default_value="depth",
             description="Output directory for raw depth maps before confidence filtering; relative paths are resolved under dataset_root",
         ),
         DeclareLaunchArgument(

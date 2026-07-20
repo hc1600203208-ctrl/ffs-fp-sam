@@ -64,7 +64,7 @@ struct FoundationPosePipelinePackage : public async_pipeline::IPipelinePackage {
   // 保存用于推理的blob_buffer
   inference_core::BlobsTensor* infer_buffer;
 
-  // **最终输出的位姿** //
+  // Scorer selected pose in the centered mesh coordinate system used internally by the renderer.
   Eigen::Matrix4f actual_pose;
 
   inference_core::BlobsTensor* GetInferBuffer()

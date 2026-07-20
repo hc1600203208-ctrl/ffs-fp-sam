@@ -28,7 +28,7 @@ public:
    * @param depth Depth image (CV_32FC1 format)
    * @param mask Object mask (CV_8UC1 format, positive pixels > 0)
    * @param target_name Object category name (must match construction mapping)
-   * @param out_pose_in_mesh Output pose in mesh coordinate frame
+   * @param out_pose_in_mesh Output pose in the original mesh coordinate frame, matching official Python FoundationPose
    * @param refine_itr Refinement process iteration num
    * @return true Registration successful
    * @return false Registration failed
@@ -49,9 +49,9 @@ public:
    *
    * @param rgb Input RGB image (must be in RGB format)
    * @param depth Depth image (CV_32FC1 format)
-   * @param hyp_pose_in_mesh Hypothesis pose in mesh frame (from Register or other sources)
+   * @param hyp_pose_in_mesh Hypothesis pose in the original mesh coordinate frame (from Register or other sources)
    * @param target_name Object category name (must match construction mapping)
-   * @param out_pose_in_mesh Output pose in mesh coordinate frame
+   * @param out_pose_in_mesh Output pose in the original mesh coordinate frame, matching official Python FoundationPose
    * @param refine_itr Refinement process iteration num
    * @return true Tracking successful
    * @return false Tracking failed
