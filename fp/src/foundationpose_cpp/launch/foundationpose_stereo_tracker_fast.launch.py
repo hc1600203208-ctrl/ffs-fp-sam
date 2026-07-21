@@ -57,7 +57,7 @@ def generate_launch_description():
         DeclareLaunchArgument("text_threshold", default_value="0.4"),
         DeclareLaunchArgument(
             "save_frame_outputs",
-            default_value="true",
+            default_value="false",
             description="Save each successful pose output and its pose visualization frame.",
         ),
         DeclareLaunchArgument(
