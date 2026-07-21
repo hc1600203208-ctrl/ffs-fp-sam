@@ -64,20 +64,12 @@ enum ImageDataFormat { YUV = 0, RGB = 1, BGR = 2, GRAY = 3 };
 
 #define MESSURE_DURATION(run)                                                                \
   {                                                                                          \
-    auto start = std::chrono::high_resolution_clock::now();                                  \
     (run);                                                                                   \
-    auto end = std::chrono::high_resolution_clock::now();                                    \
-    LOG(INFO) << #run << " cost(us): "                                                       \
-              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count(); \
   }
 
 #define MESSURE_DURATION_AND_CHECK_STATE(run, hint)                                          \
   {                                                                                          \
-    auto start = std::chrono::high_resolution_clock::now();                                  \
     CHECK_STATE((run), hint);                                                                \
-    auto end = std::chrono::high_resolution_clock::now();                                    \
-    LOG(INFO) << #run << " cost(us): "                                                       \
-              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count(); \
   }
 
 #endif

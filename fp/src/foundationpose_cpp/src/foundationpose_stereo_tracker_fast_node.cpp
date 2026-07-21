@@ -366,6 +366,77 @@ Eigen::Vector3f RotationMatrixToRpyDegrees(const Eigen::Matrix3f &rotation)
   return Eigen::Vector3f(roll, pitch, yaw) * kRadiansToDegrees;
 }
 
+float NormalizeAngleDegrees(float angle_degrees)
+{
+  angle_degrees = std::fmod(angle_degrees + 180.0F, 360.0F);
+  if (angle_degrees < 0.0F)
+  {
+    angle_degrees += 360.0F;
+  }
+  return angle_degrees - 180.0F;
+}
+
+Eigen::Vector3f NormalizeRpyDegrees(const Eigen::Vector3f &rpy_degrees)
+{
+  return Eigen::Vector3f(NormalizeAngleDegrees(rpy_degrees.x()),
+                         NormalizeAngleDegrees(rpy_degrees.y()),
+                         NormalizeAngleDegrees(rpy_degrees.z()));
+}
+
+Eigen::Vector3f UnwrapRpyDegreesToReference(const Eigen::Vector3f &rpy_degrees,
+                                            const Eigen::Vector3f &reference_rpy_degrees)
+{
+  Eigen::Vector3f unwrapped = rpy_degrees;
+  for (int i = 0; i < 3; ++i)
+  {
+    const float delta = NormalizeAngleDegrees(unwrapped[i] - reference_rpy_degrees[i]);
+    unwrapped[i]      = reference_rpy_degrees[i] + delta;
+  }
+  return unwrapped;
+}
+
+void DrawEulerAnglesOverlay(cv::Mat &image, const Eigen::Vector3f &rpy_degrees)
+{
+  std::ostringstream roll_stream;
+  std::ostringstream pitch_stream;
+  std::ostringstream yaw_stream;
+  roll_stream << std::fixed << std::setprecision(2) << rpy_degrees.x();
+  pitch_stream << std::fixed << std::setprecision(2) << rpy_degrees.y();
+  yaw_stream << std::fixed << std::setprecision(2) << rpy_degrees.z();
+
+  const std::vector<std::string> lines = {
+      "Euler angle (deg)",
+      "Roll X:  " + roll_stream.str(),
+      "Pitch Y: " + pitch_stream.str(),
+      "Yaw Z:   " + yaw_stream.str()};
+
+  const int x             = 12;
+  const int y_start       = 24;
+  const int line_height   = 24;
+  const double font_scale = 0.58;
+  const int thickness     = 1;
+  for (size_t i = 0; i < lines.size(); ++i)
+  {
+    const cv::Point origin(x, y_start + static_cast<int>(i) * line_height);
+    cv::putText(image,
+                lines[i],
+                origin,
+                cv::FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                cv::Scalar(0, 0, 0),
+                thickness + 2,
+                cv::LINE_AA);
+    cv::putText(image,
+                lines[i],
+                origin,
+                cv::FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                cv::Scalar(255, 255, 255),
+                thickness,
+                cv::LINE_AA);
+  }
+}
+
 std::string PoseToCsvRow(size_t                      frame_index,
                          const std::string          &mode,
                          const std_msgs::msg::Header &header,
@@ -439,7 +510,7 @@ void Draw3DBoundingBox(const Eigen::Matrix3f &intrinsic,
                                                   {0, 4}, {1, 5}, {2, 6}, {3, 7}};
   for (const auto &edge : edges)
   {
-    // cv::line(image, image_points[edge.first], image_points[edge.second], cv::Scalar(0, 255, 0), 2);
+    cv::line(image, image_points[edge.first], image_points[edge.second], cv::Scalar(0, 255, 0), 2);
   }
 
   const Eigen::Vector4f center = pose * Eigen::Vector4f(0.0F, 0.0F, 0.0F, 1.0F);
@@ -489,11 +560,11 @@ public:
     BuildPoseModel();
     SetupRosInterfaces();
 
-    RCLCPP_INFO(this->get_logger(),
-                "Fast stereo FoundationPose node ready: %s + %s -> %s",
-                left_image_topic_.c_str(),
-                right_image_topic_.c_str(),
-                pose_topic_.c_str());
+    // RCLCPP_INFO(this->get_logger(),
+    //             "Fast stereo FoundationPose node ready: %s + %s -> %s",
+    //             left_image_topic_.c_str(),
+    //             right_image_topic_.c_str(),
+    //             pose_topic_.c_str());
   }
 
 private:
@@ -715,9 +786,9 @@ private:
              "tx,ty,tz,qx,qy,qz,qw,rot_x_deg,rot_y_deg,rot_z_deg,"
              "delta_rot_x_deg,delta_rot_y_deg,delta_rot_z_deg,"
              "m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33\n";
-      RCLCPP_INFO(this->get_logger(),
-                  "Saving per-frame pose and visualization outputs to: %s",
-                  frame_output_dir_.c_str());
+      // RCLCPP_INFO(this->get_logger(),
+      //             "Saving per-frame pose and visualization outputs to: %s",
+      //             frame_output_dir_.c_str());
     }
 
     left_image_sub_.subscribe(this, left_image_topic_, image_qos_profile_.get_rmw_qos_profile());
@@ -743,9 +814,9 @@ private:
     std::string rectification_error;
     if (!ComputeStereoRectificationMaps(calibration_, image_size, &rectification_maps_, &rectification_error))
     {
-      RCLCPP_ERROR(this->get_logger(),
-                   "Failed to compute stereo rectification maps: %s",
-                   rectification_error.c_str());
+      // RCLCPP_ERROR(this->get_logger(),
+      //              "Failed to compute stereo rectification maps: %s",
+      //              rectification_error.c_str());
       return false;
     }
 
@@ -857,10 +928,10 @@ private:
 
       RunTracking(left_msg->header, pose_rgb, depth);
     }
-    catch (const std::exception &e)
+    catch (const std::exception &)
     {
-      RCLCPP_ERROR_THROTTLE(
-          this->get_logger(), *this->get_clock(), 2000, "Fast stereo callback failed: %s", e.what());
+      // RCLCPP_ERROR_THROTTLE(
+      //     this->get_logger(), *this->get_clock(), 2000, "Fast stereo callback failed: %s", e.what());
     }
   }
 
@@ -887,14 +958,14 @@ private:
     {
       if (!resize_mask_to_input_)
       {
-        RCLCPP_WARN_THROTTLE(this->get_logger(),
-                             *this->get_clock(),
-                             2000,
-                             "Mask size %dx%d does not match RGBD size %dx%d.",
-                             mask.cols,
-                             mask.rows,
-                             rgb.cols,
-                             rgb.rows);
+        // RCLCPP_WARN_THROTTLE(this->get_logger(),
+        //                      *this->get_clock(),
+        //                      2000,
+        //                      "Mask size %dx%d does not match RGBD size %dx%d.",
+        //                      mask.cols,
+        //                      mask.rows,
+        //                      rgb.cols,
+        //                      rgb.rows);
         return;
       }
       cv::resize(mask, mask, rgb.size(), 0.0, 0.0, cv::INTER_NEAREST);
@@ -903,17 +974,18 @@ private:
     Eigen::Matrix4f pose;
     if (!foundation_pose_->Register(rgb, depth, mask, object_name_, pose, register_refine_iters_))
     {
-      RCLCPP_WARN_THROTTLE(
-          this->get_logger(), *this->get_clock(), 2000, "Initial FoundationPose registration failed.");
+      // RCLCPP_WARN_THROTTLE(
+      //     this->get_logger(), *this->get_clock(), 2000, "Initial FoundationPose registration failed.");
       return;
     }
 
     has_pose_  = true;
     last_pose_ = pose;
     PublishPose(header, last_pose_);
+    UpdateCurrentEulerAngles(last_pose_);
     SaveFrameOutput(header, rgb, last_pose_, "register");
     PublishVisualization(header, rgb, last_pose_);
-    RCLCPP_INFO(this->get_logger(), "Initial registration succeeded. Fast direct tracking started.");
+    // RCLCPP_INFO(this->get_logger(), "Initial registration succeeded. Fast direct tracking started.");
   }
 
   void RunTracking(const std_msgs::msg::Header &header, const cv::Mat &rgb, const cv::Mat &depth)
@@ -926,6 +998,7 @@ private:
 
     last_pose_ = pose;
     PublishPose(header, last_pose_);
+    UpdateCurrentEulerAngles(last_pose_);
     SaveFrameOutput(header, rgb, last_pose_, "track");
     PublishVisualization(header, rgb, last_pose_);
   }
@@ -937,6 +1010,62 @@ private:
       header.frame_id = pose_frame_id_;
     }
     pose_pub_->publish(PoseMatrixToPoseStamped(pose, header));
+  }
+
+  Eigen::Vector3f ComputeSeededRpyDegrees(const Eigen::Matrix3f &rotation_matrix) const
+  {
+    const float sy = std::sqrt(rotation_matrix(0, 0) * rotation_matrix(0, 0) +
+                               rotation_matrix(1, 0) * rotation_matrix(1, 0));
+    if (!has_last_printed_rpy_ || sy >= 1e-4F)
+    {
+      return RotationMatrixToRpyDegrees(rotation_matrix);
+    }
+
+    const float pitch_degrees =
+        std::atan2(-rotation_matrix(2, 0), sy) * kRadiansToDegrees;
+    const float coupled_roll_degrees =
+        std::atan2(-rotation_matrix(1, 2), rotation_matrix(1, 1)) * kRadiansToDegrees;
+    const float previous_yaw_degrees = last_printed_rpy_degrees_.z();
+    const float roll_degrees = (rotation_matrix(2, 0) < 0.0F)
+                                   ? coupled_roll_degrees + previous_yaw_degrees
+                                   : coupled_roll_degrees - previous_yaw_degrees;
+
+    return Eigen::Vector3f(roll_degrees, pitch_degrees, previous_yaw_degrees);
+  }
+
+  Eigen::Vector3f ComputeContinuousRpyDegrees(const Eigen::Matrix3f &rotation_matrix)
+  {
+    const Eigen::Vector3f raw_rpy_degrees = ComputeSeededRpyDegrees(rotation_matrix);
+    const Eigen::Vector3f candidate_a     = NormalizeRpyDegrees(raw_rpy_degrees);
+    const Eigen::Vector3f candidate_b = NormalizeRpyDegrees(
+        Eigen::Vector3f(raw_rpy_degrees.x() + 180.0F,
+                        180.0F - raw_rpy_degrees.y(),
+                        raw_rpy_degrees.z() + 180.0F));
+
+    if (!has_last_printed_rpy_)
+    {
+      has_last_printed_rpy_ = true;
+      last_printed_rpy_degrees_ = candidate_a;
+      return candidate_a;
+    }
+
+    const Eigen::Vector3f unwrapped_a =
+        UnwrapRpyDegreesToReference(candidate_a, last_printed_rpy_degrees_);
+    const Eigen::Vector3f unwrapped_b =
+        UnwrapRpyDegreesToReference(candidate_b, last_printed_rpy_degrees_);
+
+    const float dist_a = (unwrapped_a - last_printed_rpy_degrees_).squaredNorm();
+    const float dist_b = (unwrapped_b - last_printed_rpy_degrees_).squaredNorm();
+
+    const Eigen::Vector3f selected = (dist_b < dist_a) ? unwrapped_b : unwrapped_a;
+    last_printed_rpy_degrees_       = selected;
+    return selected;
+  }
+
+  void UpdateCurrentEulerAngles(const Eigen::Matrix4f &pose)
+  {
+    current_rpy_degrees_ = ComputeContinuousRpyDegrees(pose.block<3, 3>(0, 0));
+    has_current_rpy_     = true;
   }
 
   void SaveFrameOutput(const std_msgs::msg::Header &header,
@@ -957,11 +1086,11 @@ private:
     const cv::Mat visualization_bgr = BuildPoseVisualizationBgr(rgb, pose);
     if (!cv::imwrite(visualization_path.string(), visualization_bgr))
     {
-      RCLCPP_ERROR_THROTTLE(this->get_logger(),
-                            *this->get_clock(),
-                            2000,
-                            "Failed to save pose visualization frame: %s",
-                            visualization_path.string().c_str());
+      // RCLCPP_ERROR_THROTTLE(this->get_logger(),
+      //                       *this->get_clock(),
+      //                       2000,
+      //                       "Failed to save pose visualization frame: %s",
+      //                       visualization_path.string().c_str());
       return;
     }
 
@@ -1011,6 +1140,10 @@ private:
 
     const auto draw_pose = detection_6d::ConvertPoseMesh2BBox(pose, mesh_loader_);
     Draw3DBoundingBox(intrinsic_, draw_pose, mesh_loader_->GetObjectDimension(), visualization_bgr);
+    if (has_current_rpy_)
+    {
+      DrawEulerAnglesOverlay(visualization_bgr, current_rpy_degrees_);
+    }
     return visualization_bgr;
   }
 
@@ -1074,10 +1207,14 @@ private:
   size_t track_refine_iters_{2};
   size_t saved_frame_index_{0};
   bool has_last_saved_pose_{false};
+  bool has_last_printed_rpy_{false};
+  bool has_current_rpy_{false};
   std::string frame_output_dir_;
   std::string pose_output_path_;
   std::ofstream pose_output_stream_;
   Eigen::Matrix4f last_saved_pose_{Eigen::Matrix4f::Identity()};
+  Eigen::Vector3f last_printed_rpy_degrees_{Eigen::Vector3f::Zero()};
+  Eigen::Vector3f current_rpy_degrees_{Eigen::Vector3f::Zero()};
 
   rclcpp::QoS image_qos_profile_;
   StereoCalibration       calibration_;
@@ -1109,11 +1246,11 @@ int main(int argc, char **argv)
   {
     rclcpp::spin(std::make_shared<FoundationPoseStereoTrackerFastNode>());
   }
-  catch (const std::exception &e)
+  catch (const std::exception &)
   {
-    RCLCPP_FATAL(rclcpp::get_logger("foundationpose_stereo_tracker_fast_node"),
-                 "Node startup failed: %s",
-                 e.what());
+    // RCLCPP_FATAL(rclcpp::get_logger("foundationpose_stereo_tracker_fast_node"),
+    //              "Node startup failed: %s",
+    //              e.what());
     rclcpp::shutdown();
     return 1;
   }

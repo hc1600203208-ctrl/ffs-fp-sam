@@ -85,11 +85,7 @@ struct FoundationPosePipelinePackage : public async_pipeline::IPipelinePackage {
 
 #define MESSURE_DURATION_AND_CHECK_CUDA(run, hint)                                           \
   {                                                                                          \
-    auto start = std::chrono::high_resolution_clock::now();                                  \
     CHECK_CUDA((run), hint);                                                                 \
-    auto end = std::chrono::high_resolution_clock::now();                                    \
-    LOG(INFO) << #run << " cost(us): "                                                       \
-              << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count(); \
   }
 
 #define CHECK_CUDA_THROW(result, hint) \
