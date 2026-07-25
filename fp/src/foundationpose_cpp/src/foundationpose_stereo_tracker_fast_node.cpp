@@ -395,17 +395,28 @@ Eigen::Vector3f UnwrapRpyDegreesToReference(const Eigen::Vector3f &rpy_degrees,
   return unwrapped;
 }
 
-void DrawEulerAnglesOverlay(cv::Mat &image, const Eigen::Vector3f &rpy_degrees)
+void DrawFilteredPoseOverlay(cv::Mat                &image,
+                             const Eigen::Vector3f  &translation_meters,
+                             const Eigen::Vector3f  &rpy_degrees)
 {
+  std::ostringstream x_stream;
+  std::ostringstream y_stream;
+  std::ostringstream z_stream;
   std::ostringstream roll_stream;
   std::ostringstream pitch_stream;
   std::ostringstream yaw_stream;
+  x_stream << std::fixed << std::setprecision(4) << translation_meters.x();
+  y_stream << std::fixed << std::setprecision(4) << translation_meters.y();
+  z_stream << std::fixed << std::setprecision(4) << translation_meters.z();
   roll_stream << std::fixed << std::setprecision(2) << rpy_degrees.x();
   pitch_stream << std::fixed << std::setprecision(2) << rpy_degrees.y();
   yaw_stream << std::fixed << std::setprecision(2) << rpy_degrees.z();
 
   const std::vector<std::string> lines = {
-      "Euler angle (deg)",
+      "Filtered pose",
+      "X: " + x_stream.str() + " m",
+      "Y: " + y_stream.str() + " m",
+      "Z: " + z_stream.str() + " m",
       "Roll X:  " + roll_stream.str(),
       "Pitch Y: " + pitch_stream.str(),
       "Yaw Z:   " + yaw_stream.str()};
@@ -610,6 +621,11 @@ private:
     this->declare_parameter<bool>("save_frame_outputs", false);
     this->declare_parameter<std::string>("frame_output_dir",
                                          "/home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs");
+    this->declare_parameter<bool>("enable_pose_smoothing", true);
+    this->declare_parameter<double>("pose_smoothing_translation_alpha", 0.25);
+    this->declare_parameter<double>("pose_smoothing_rotation_alpha", 0.25);
+    this->declare_parameter<double>("pose_smoothing_reset_translation_meters", 0.20);
+    this->declare_parameter<double>("pose_smoothing_reset_rotation_degrees", 45.0);
     this->declare_parameter<double>("fx", 0.0);
     this->declare_parameter<double>("fy", 0.0);
     this->declare_parameter<double>("cx", 0.0);
@@ -648,6 +664,15 @@ private:
     show_visualization_window_ = this->get_parameter("show_visualization_window").as_bool();
     save_frame_outputs_ = this->get_parameter("save_frame_outputs").as_bool();
     frame_output_dir_ = this->get_parameter("frame_output_dir").as_string();
+    enable_pose_smoothing_ = this->get_parameter("enable_pose_smoothing").as_bool();
+    pose_smoothing_translation_alpha_ = std::clamp(
+        this->get_parameter("pose_smoothing_translation_alpha").as_double(), 0.0, 1.0);
+    pose_smoothing_rotation_alpha_ = std::clamp(
+        this->get_parameter("pose_smoothing_rotation_alpha").as_double(), 0.0, 1.0);
+    pose_smoothing_reset_translation_meters_ =
+        this->get_parameter("pose_smoothing_reset_translation_meters").as_double();
+    pose_smoothing_reset_rotation_degrees_ =
+        this->get_parameter("pose_smoothing_reset_rotation_degrees").as_double();
     mask_poll_interval_ms_ = this->get_parameter("mask_poll_interval_ms").as_int();
     resize_mask_to_input_  = this->get_parameter("resize_mask_to_input").as_bool();
     max_input_image_height_ = this->get_parameter("max_input_image_height").as_int();
@@ -981,8 +1006,10 @@ private:
 
     has_pose_  = true;
     last_pose_ = pose;
+    const Eigen::Matrix4f filtered_pose = SmoothPoseForDisplay(last_pose_);
+    UpdateCurrentFilteredPose(filtered_pose);
+    PrintFilteredPose(header, filtered_pose, "register");
     PublishPose(header, last_pose_);
-    UpdateCurrentEulerAngles(last_pose_);
     SaveFrameOutput(header, rgb, last_pose_, "register");
     PublishVisualization(header, rgb, last_pose_);
     // RCLCPP_INFO(this->get_logger(), "Initial registration succeeded. Fast direct tracking started.");
@@ -997,8 +1024,10 @@ private:
     }
 
     last_pose_ = pose;
+    const Eigen::Matrix4f filtered_pose = SmoothPoseForDisplay(last_pose_);
+    UpdateCurrentFilteredPose(filtered_pose);
+    PrintFilteredPose(header, filtered_pose, "track");
     PublishPose(header, last_pose_);
-    UpdateCurrentEulerAngles(last_pose_);
     SaveFrameOutput(header, rgb, last_pose_, "track");
     PublishVisualization(header, rgb, last_pose_);
   }
@@ -1010,6 +1039,65 @@ private:
       header.frame_id = pose_frame_id_;
     }
     pose_pub_->publish(PoseMatrixToPoseStamped(pose, header));
+  }
+
+  Eigen::Matrix4f SmoothPoseForDisplay(const Eigen::Matrix4f &raw_pose)
+  {
+    if (!enable_pose_smoothing_)
+    {
+      has_smoothed_output_pose_ = false;
+      return raw_pose;
+    }
+
+    Eigen::Quaternionf raw_quat(raw_pose.block<3, 3>(0, 0));
+    raw_quat.normalize();
+    const Eigen::Vector3f raw_translation = raw_pose.block<3, 1>(0, 3);
+
+    if (!has_smoothed_output_pose_)
+    {
+      smoothed_output_pose_ = raw_pose;
+      smoothed_output_pose_.block<3, 3>(0, 0) = raw_quat.toRotationMatrix();
+      has_smoothed_output_pose_ = true;
+      return smoothed_output_pose_;
+    }
+
+    Eigen::Quaternionf previous_quat(smoothed_output_pose_.block<3, 3>(0, 0));
+    previous_quat.normalize();
+    if (previous_quat.dot(raw_quat) < 0.0F)
+    {
+      raw_quat.coeffs() *= -1.0F;
+    }
+
+    const Eigen::Vector3f previous_translation = smoothed_output_pose_.block<3, 1>(0, 3);
+    const double translation_delta = static_cast<double>((raw_translation - previous_translation).norm());
+    const double quaternion_dot =
+        std::clamp(static_cast<double>(std::fabs(previous_quat.dot(raw_quat))), 0.0, 1.0);
+    const double rotation_delta_degrees =
+        2.0 * std::acos(quaternion_dot) * static_cast<double>(kRadiansToDegrees);
+
+    const bool reset_by_translation =
+        pose_smoothing_reset_translation_meters_ > 0.0 &&
+        translation_delta > pose_smoothing_reset_translation_meters_;
+    const bool reset_by_rotation =
+        pose_smoothing_reset_rotation_degrees_ > 0.0 &&
+        rotation_delta_degrees > pose_smoothing_reset_rotation_degrees_;
+    if (reset_by_translation || reset_by_rotation)
+    {
+      smoothed_output_pose_ = raw_pose;
+      smoothed_output_pose_.block<3, 3>(0, 0) = raw_quat.toRotationMatrix();
+      return smoothed_output_pose_;
+    }
+
+    const float translation_alpha = static_cast<float>(pose_smoothing_translation_alpha_);
+    const float rotation_alpha    = static_cast<float>(pose_smoothing_rotation_alpha_);
+    const Eigen::Vector3f smoothed_translation =
+        previous_translation + translation_alpha * (raw_translation - previous_translation);
+    const Eigen::Quaternionf smoothed_quat = previous_quat.slerp(rotation_alpha, raw_quat).normalized();
+
+    smoothed_output_pose_ = raw_pose;
+    smoothed_output_pose_.block<3, 3>(0, 0) = smoothed_quat.toRotationMatrix();
+    smoothed_output_pose_.block<3, 1>(0, 3) = smoothed_translation;
+    return smoothed_output_pose_;
   }
 
   Eigen::Vector3f ComputeSeededRpyDegrees(const Eigen::Matrix3f &rotation_matrix) const
@@ -1062,10 +1150,43 @@ private:
     return selected;
   }
 
-  void UpdateCurrentEulerAngles(const Eigen::Matrix4f &pose)
+  void UpdateCurrentFilteredPose(const Eigen::Matrix4f &pose)
   {
     current_rpy_degrees_ = ComputeContinuousRpyDegrees(pose.block<3, 3>(0, 0));
-    has_current_rpy_     = true;
+    current_translation_meters_ = pose.block<3, 1>(0, 3);
+    has_current_filtered_pose_  = true;
+  }
+
+  void PrintFilteredPose(const std_msgs::msg::Header &header,
+                         const Eigen::Matrix4f       &pose,
+                         const std::string           &mode) const
+  {
+    auto output_header = header;
+    if (!pose_frame_id_.empty())
+    {
+      output_header.frame_id = pose_frame_id_;
+    }
+
+    Eigen::Quaternionf quat(pose.block<3, 3>(0, 0));
+    quat.normalize();
+
+    RCLCPP_INFO(this->get_logger(),
+                "FILTERED_POSE mode=%s stamp=%d.%09u frame=%s xyz_m=[%.6f %.6f %.6f] "
+                "rpy_deg=[%.3f %.3f %.3f] quat=[%.6f %.6f %.6f %.6f]",
+                mode.c_str(),
+                output_header.stamp.sec,
+                output_header.stamp.nanosec,
+                output_header.frame_id.c_str(),
+                pose(0, 3),
+                pose(1, 3),
+                pose(2, 3),
+                current_rpy_degrees_.x(),
+                current_rpy_degrees_.y(),
+                current_rpy_degrees_.z(),
+                quat.x(),
+                quat.y(),
+                quat.z(),
+                quat.w());
   }
 
   void SaveFrameOutput(const std_msgs::msg::Header &header,
@@ -1140,10 +1261,6 @@ private:
 
     const auto draw_pose = detection_6d::ConvertPoseMesh2BBox(pose, mesh_loader_);
     Draw3DBoundingBox(intrinsic_, draw_pose, mesh_loader_->GetObjectDimension(), visualization_bgr);
-    if (has_current_rpy_)
-    {
-      DrawEulerAnglesOverlay(visualization_bgr, current_rpy_degrees_);
-    }
     return visualization_bgr;
   }
 
@@ -1156,7 +1273,7 @@ private:
       return;
     }
 
-    cv::Mat visualization_bgr = BuildPoseVisualizationBgr(rgb, pose);
+    const cv::Mat visualization_bgr = BuildPoseVisualizationBgr(rgb, pose);
 
     if (publish_visualization_ && visualization_pub_ != nullptr)
     {
@@ -1167,7 +1284,14 @@ private:
 
     if (show_visualization_window_)
     {
-      cv::imshow(visualization_window_name_, visualization_bgr);
+      cv::Mat window_visualization_bgr = visualization_bgr.clone();
+      if (has_current_filtered_pose_)
+      {
+        DrawFilteredPoseOverlay(window_visualization_bgr,
+                                current_translation_meters_,
+                                current_rpy_degrees_);
+      }
+      cv::imshow(visualization_window_name_, window_visualization_bgr);
       cv::waitKey(1);
     }
   }
@@ -1203,17 +1327,25 @@ private:
   bool   publish_visualization_{false};
   bool   show_visualization_window_{false};
   bool   save_frame_outputs_{false};
+  bool   enable_pose_smoothing_{true};
+  double pose_smoothing_translation_alpha_{0.25};
+  double pose_smoothing_rotation_alpha_{0.25};
+  double pose_smoothing_reset_translation_meters_{0.20};
+  double pose_smoothing_reset_rotation_degrees_{45.0};
   size_t register_refine_iters_{5};
   size_t track_refine_iters_{2};
   size_t saved_frame_index_{0};
   bool has_last_saved_pose_{false};
   bool has_last_printed_rpy_{false};
-  bool has_current_rpy_{false};
+  bool has_current_filtered_pose_{false};
+  bool has_smoothed_output_pose_{false};
   std::string frame_output_dir_;
   std::string pose_output_path_;
   std::ofstream pose_output_stream_;
   Eigen::Matrix4f last_saved_pose_{Eigen::Matrix4f::Identity()};
+  Eigen::Matrix4f smoothed_output_pose_{Eigen::Matrix4f::Identity()};
   Eigen::Vector3f last_printed_rpy_degrees_{Eigen::Vector3f::Zero()};
+  Eigen::Vector3f current_translation_meters_{Eigen::Vector3f::Zero()};
   Eigen::Vector3f current_rpy_degrees_{Eigen::Vector3f::Zero()};
 
   rclcpp::QoS image_qos_profile_;
