@@ -622,8 +622,12 @@ private:
     this->declare_parameter<std::string>("frame_output_dir",
                                          "/home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs");
     this->declare_parameter<bool>("enable_pose_smoothing", true);
-    this->declare_parameter<double>("pose_smoothing_translation_alpha", 0.25);
-    this->declare_parameter<double>("pose_smoothing_rotation_alpha", 0.25);
+    this->declare_parameter<double>("pose_smoothing_translation_alpha", 0.45);
+    this->declare_parameter<double>("pose_smoothing_rotation_alpha", 0.45);
+    this->declare_parameter<double>("pose_smoothing_fast_translation_alpha", 0.90);
+    this->declare_parameter<double>("pose_smoothing_fast_rotation_alpha", 0.90);
+    this->declare_parameter<double>("pose_smoothing_translation_response_meters", 0.015);
+    this->declare_parameter<double>("pose_smoothing_rotation_response_degrees", 3.0);
     this->declare_parameter<double>("pose_smoothing_reset_translation_meters", 0.20);
     this->declare_parameter<double>("pose_smoothing_reset_rotation_degrees", 45.0);
     this->declare_parameter<double>("fx", 0.0);
@@ -669,6 +673,16 @@ private:
         this->get_parameter("pose_smoothing_translation_alpha").as_double(), 0.0, 1.0);
     pose_smoothing_rotation_alpha_ = std::clamp(
         this->get_parameter("pose_smoothing_rotation_alpha").as_double(), 0.0, 1.0);
+    pose_smoothing_fast_translation_alpha_ = std::clamp(
+        this->get_parameter("pose_smoothing_fast_translation_alpha").as_double(),
+        pose_smoothing_translation_alpha_, 1.0);
+    pose_smoothing_fast_rotation_alpha_ = std::clamp(
+        this->get_parameter("pose_smoothing_fast_rotation_alpha").as_double(),
+        pose_smoothing_rotation_alpha_, 1.0);
+    pose_smoothing_translation_response_meters_ =
+        std::max(0.0, this->get_parameter("pose_smoothing_translation_response_meters").as_double());
+    pose_smoothing_rotation_response_degrees_ =
+        std::max(0.0, this->get_parameter("pose_smoothing_rotation_response_degrees").as_double());
     pose_smoothing_reset_translation_meters_ =
         this->get_parameter("pose_smoothing_reset_translation_meters").as_double();
     pose_smoothing_reset_rotation_degrees_ =
@@ -1012,6 +1026,9 @@ private:
     PublishPose(header, last_pose_);
     SaveFrameOutput(header, rgb, last_pose_, "register");
     PublishVisualization(header, rgb, last_pose_);
+    // PublishPose(header, filtered_pose);
+    // SaveFrameOutput(header, rgb, filtered_pose, "register");
+    // PublishVisualization(header, rgb, filtered_pose);
     // RCLCPP_INFO(this->get_logger(), "Initial registration succeeded. Fast direct tracking started.");
   }
 
@@ -1026,10 +1043,13 @@ private:
     last_pose_ = pose;
     const Eigen::Matrix4f filtered_pose = SmoothPoseForDisplay(last_pose_);
     UpdateCurrentFilteredPose(filtered_pose);
-    PrintFilteredPose(header, filtered_pose, "track");
+    PrintFilteredPose(header, filtered_pose, "register");
     PublishPose(header, last_pose_);
-    SaveFrameOutput(header, rgb, last_pose_, "track");
+    SaveFrameOutput(header, rgb, last_pose_, "register");
     PublishVisualization(header, rgb, last_pose_);
+    // PublishPose(header, filtered_pose);
+    // SaveFrameOutput(header, rgb, filtered_pose, "register");
+    // PublishVisualization(header, rgb, filtered_pose);
   }
 
   void PublishPose(std_msgs::msg::Header header, const Eigen::Matrix4f &pose)
@@ -1088,8 +1108,12 @@ private:
       return smoothed_output_pose_;
     }
 
-    const float translation_alpha = static_cast<float>(pose_smoothing_translation_alpha_);
-    const float rotation_alpha    = static_cast<float>(pose_smoothing_rotation_alpha_);
+    const float translation_alpha = static_cast<float>(ComputeAdaptiveSmoothingAlpha(
+        pose_smoothing_translation_alpha_, pose_smoothing_fast_translation_alpha_,
+        translation_delta, pose_smoothing_translation_response_meters_));
+    const float rotation_alpha = static_cast<float>(ComputeAdaptiveSmoothingAlpha(
+        pose_smoothing_rotation_alpha_, pose_smoothing_fast_rotation_alpha_,
+        rotation_delta_degrees, pose_smoothing_rotation_response_degrees_));
     const Eigen::Vector3f smoothed_translation =
         previous_translation + translation_alpha * (raw_translation - previous_translation);
     const Eigen::Quaternionf smoothed_quat = previous_quat.slerp(rotation_alpha, raw_quat).normalized();
@@ -1098,6 +1122,21 @@ private:
     smoothed_output_pose_.block<3, 3>(0, 0) = smoothed_quat.toRotationMatrix();
     smoothed_output_pose_.block<3, 1>(0, 3) = smoothed_translation;
     return smoothed_output_pose_;
+  }
+
+  double ComputeAdaptiveSmoothingAlpha(double slow_alpha,
+                                       double fast_alpha,
+                                       double delta,
+                                       double full_response_delta) const
+  {
+    if (full_response_delta <= 0.0)
+    {
+      return fast_alpha;
+    }
+
+    const double clamped_ratio = std::clamp(delta / full_response_delta, 0.0, 1.0);
+    const double smooth_ratio = clamped_ratio * clamped_ratio * (3.0 - 2.0 * clamped_ratio);
+    return slow_alpha + (fast_alpha - slow_alpha) * smooth_ratio;
   }
 
   Eigen::Vector3f ComputeSeededRpyDegrees(const Eigen::Matrix3f &rotation_matrix) const
@@ -1328,8 +1367,12 @@ private:
   bool   show_visualization_window_{false};
   bool   save_frame_outputs_{false};
   bool   enable_pose_smoothing_{true};
-  double pose_smoothing_translation_alpha_{0.25};
-  double pose_smoothing_rotation_alpha_{0.25};
+  double pose_smoothing_translation_alpha_{0.45};
+  double pose_smoothing_rotation_alpha_{0.45};
+  double pose_smoothing_fast_translation_alpha_{0.90};
+  double pose_smoothing_fast_rotation_alpha_{0.90};
+  double pose_smoothing_translation_response_meters_{0.015};
+  double pose_smoothing_rotation_response_degrees_{3.0};
   double pose_smoothing_reset_translation_meters_{0.20};
   double pose_smoothing_reset_rotation_degrees_{45.0};
   size_t register_refine_iters_{5};
