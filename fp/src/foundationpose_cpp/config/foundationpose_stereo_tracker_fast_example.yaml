@@ -36,8 +36,12 @@
 #     save_frame_outputs: false
 #     frame_output_dir: /home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs
 #     enable_pose_smoothing: true
-#     pose_smoothing_translation_alpha: 0.25
-#     pose_smoothing_rotation_alpha: 0.25
+#     pose_smoothing_translation_alpha: 0.45
+#     pose_smoothing_rotation_alpha: 0.45
+#     pose_smoothing_fast_translation_alpha: 0.90
+#     pose_smoothing_fast_rotation_alpha: 0.90
+#     pose_smoothing_translation_response_meters: 0.015
+#     pose_smoothing_rotation_response_degrees: 3.0
 #     pose_smoothing_reset_translation_meters: 0.20
 #     pose_smoothing_reset_rotation_degrees: 45.0
 
@@ -71,7 +75,7 @@ foundationpose_stereo_tracker_fast_node:
 
     refiner_engine_path: /home/bit/ffs+fp+sam/fp/models/refiner_hwc_dynamic_fp16_thor.engine
     scorer_engine_path: /home/bit/ffs+fp+sam/fp/models/scorer_hwc_dynamic_fp16_thor.engine
-    mesh_path: /home/bit/dataset/jrnew-blue/mesh1/textured_mesh.obj
+    mesh_path: /home/bit/dataset/jrnew-blue/mesh/textured_mesh.obj
     object_name: blue carton
 
     mask_image_path: ""
@@ -89,8 +93,12 @@ foundationpose_stereo_tracker_fast_node:
     save_frame_outputs: false
     frame_output_dir: /home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs
     enable_pose_smoothing: true
-    pose_smoothing_translation_alpha: 0.25
-    pose_smoothing_rotation_alpha: 0.25
+    pose_smoothing_translation_alpha: 0.45
+    pose_smoothing_rotation_alpha: 0.45
+    pose_smoothing_fast_translation_alpha: 0.90
+    pose_smoothing_fast_rotation_alpha: 0.90
+    pose_smoothing_translation_response_meters: 0.015
+    pose_smoothing_rotation_response_degrees: 3.0
     pose_smoothing_reset_translation_meters: 0.20
     pose_smoothing_reset_rotation_degrees: 45.0
 

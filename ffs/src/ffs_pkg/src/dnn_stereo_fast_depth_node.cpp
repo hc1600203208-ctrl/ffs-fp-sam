@@ -3,7 +3,11 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <filesystem>
+#include <iomanip>
+#include <limits>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -22,6 +26,8 @@
 #include "stereo_calibration_utils.hpp"
 
 namespace {
+
+namespace fs = std::filesystem;
 
 enum class StereoModel {
     FAST_FOUNDATION_STEREO,
@@ -222,6 +228,34 @@ void PublishDepth(
     publisher->publish(*out_msg.toImageMsg());
 }
 
+cv::Mat ConvertDepthMetersToUint16Millimeters(const cv::Mat& depth_meters) {
+    cv::Mat depth_mm(depth_meters.size(), CV_16UC1, cv::Scalar(0));
+    for (int y = 0; y < depth_meters.rows; ++y) {
+        const float* depth_row = depth_meters.ptr<float>(y);
+        uint16_t* output_row = depth_mm.ptr<uint16_t>(y);
+        for (int x = 0; x < depth_meters.cols; ++x) {
+            const float value_m = depth_row[x];
+            if (!std::isfinite(value_m) || value_m <= 0.0f) {
+                continue;
+            }
+
+            const float value_mm = value_m * 1000.0f;
+            if (value_mm <= 0.0f) {
+                continue;
+            }
+            output_row[x] = static_cast<uint16_t>(
+                std::min(value_mm, static_cast<float>(std::numeric_limits<uint16_t>::max())));
+        }
+    }
+    return depth_mm;
+}
+
+std::string BuildFrameFilename(size_t frame_index) {
+    std::ostringstream stream;
+    stream << std::setw(6) << std::setfill('0') << frame_index << ".png";
+    return stream.str();
+}
+
 }  // namespace
 
 class DnnStereoFastDepthNode : public rclcpp::Node {
@@ -239,6 +273,8 @@ class DnnStereoFastDepthNode : public rclcpp::Node {
         declare_parameter("caminfo_path", std::string("caminfo.txt"));
         declare_parameter("engine_file_path", std::vector<std::string>{""});
         declare_parameter("model_type", std::string("FAST_FOUNDATION_STEREO"));
+        declare_parameter("save_frame_outputs", false);
+        declare_parameter("frame_output_dir", std::string("/home/bit/ffs+fp+sam/ffs/fast_depth_outputs"));
 
         configure();
         activate();
@@ -269,10 +305,22 @@ class DnnStereoFastDepthNode : public rclcpp::Node {
         max_timestamp_delta_seconds_ = get_parameter("max_timestamp_delta_seconds").as_double();
         sync_queue_size_ = get_parameter("sync_queue_size").as_int();
         caminfo_path_ = get_parameter("caminfo_path").as_string();
+        save_frame_outputs_ = get_parameter("save_frame_outputs").as_bool();
+        frame_output_dir_ = get_parameter("frame_output_dir").as_string();
 
         std::string calibration_error;
         if (!LoadStereoCalibrationFromTxt(caminfo_path_, &calibration_, &calibration_error)) {
             throw std::runtime_error(calibration_error);
+        }
+
+        if (save_frame_outputs_) {
+            if (frame_output_dir_.empty()) {
+                throw std::runtime_error("frame_output_dir must not be empty when save_frame_outputs is true.");
+            }
+            fs::create_directories(fs::path(frame_output_dir_) / "left");
+            fs::create_directories(fs::path(frame_output_dir_) / "right");
+            fs::create_directories(fs::path(frame_output_dir_) / "depth");
+            RCLCPP_INFO(get_logger(), "Saving stereo frames and depth images to: %s", frame_output_dir_.c_str());
         }
 
         const std::vector<std::string> engine_file_path = get_parameter("engine_file_path").as_string_array();
@@ -438,10 +486,42 @@ class DnnStereoFastDepthNode : public rclcpp::Node {
         }
 
         PublishDepth(left_msg->header, depth_aligned, depth_pub_);
+        SaveFrameOutputs(left_image, right_image, depth_aligned);
 
         const auto end = std::chrono::high_resolution_clock::now();
         const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         RCLCPP_INFO(get_logger(), "Depth-only stereo frame processed in %ld ms.", total_ms);
+    }
+
+    void SaveFrameOutputs(
+        const cv::Mat& left_image,
+        const cv::Mat& right_image,
+        const cv::Mat& depth_meters) {
+        if (!save_frame_outputs_) {
+            return;
+        }
+
+        const size_t frame_index = saved_frame_index_++;
+        const std::string filename = BuildFrameFilename(frame_index);
+        const fs::path output_root(frame_output_dir_);
+        const fs::path left_path = output_root / "left" / filename;
+        const fs::path right_path = output_root / "right" / filename;
+        const fs::path depth_path = output_root / "depth" / filename;
+
+        if (!cv::imwrite(left_path.string(), left_image)) {
+            RCLCPP_ERROR_THROTTLE(
+                get_logger(), *get_clock(), 2000, "Failed to save left image: %s", left_path.c_str());
+        }
+        if (!cv::imwrite(right_path.string(), right_image)) {
+            RCLCPP_ERROR_THROTTLE(
+                get_logger(), *get_clock(), 2000, "Failed to save right image: %s", right_path.c_str());
+        }
+
+        const cv::Mat depth_mm = ConvertDepthMetersToUint16Millimeters(depth_meters);
+        if (!cv::imwrite(depth_path.string(), depth_mm)) {
+            RCLCPP_ERROR_THROTTLE(
+                get_logger(), *get_clock(), 2000, "Failed to save depth image: %s", depth_path.c_str());
+        }
     }
 
     rclcpp::QoS image_qos_profile_;
@@ -452,6 +532,9 @@ class DnnStereoFastDepthNode : public rclcpp::Node {
     double max_depth_meters_ = 100.0;
     double max_timestamp_delta_seconds_ = 0.07;
     std::string caminfo_path_;
+    bool save_frame_outputs_ = false;
+    std::string frame_output_dir_;
+    size_t saved_frame_index_ = 1;
 
     StereoCalibration calibration_;
     StereoRectificationMaps rectification_maps_;
