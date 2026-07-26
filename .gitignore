@@ -104,7 +104,7 @@ assets/
 /fp/src/foundationpose_cpp/.gitmodules
 /fp/src/foundationpose_cpp/.pre-commit-config.yaml
 /fp/src/foundationpose_cpp/simple_tests/
-/fp/src/foundationpose_cpp/tools/
+
 
 # Bundled third-party binary SDKs
 /fp/src/foundationpose_cpp/easy_deploy_tool/inference_core/ort_core/onnxruntime-pkg-*/
