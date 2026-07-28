@@ -34,22 +34,22 @@ def generate_launch_description():
     launch_args = [
         DeclareLaunchArgument(
             "params_file",
-            default_value="/home/bit/ffs+fp+sam/fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_fast_example.yaml",
+            default_value="/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_fast_example.yaml",
             description="Parameter file for the fast integrated stereo FoundationPose tracker.",
         ),
         DeclareLaunchArgument("run_first_mask", default_value="true"),
         DeclareLaunchArgument("use_conda_for_first_mask", default_value="true"),
-        DeclareLaunchArgument("conda_executable", default_value="/home/bit/anaconda3/bin/conda"),
+        DeclareLaunchArgument("conda_executable", default_value="/home/hc/anaconda3/bin/conda"),
         DeclareLaunchArgument("conda_env_name", default_value="sam"),
         DeclareLaunchArgument("left_image_topic", default_value="/left/image_raw"),
-        DeclareLaunchArgument("python_executable", default_value="/home/bit/anaconda3/envs/sam/bin/python"),
+        DeclareLaunchArgument("python_executable", default_value="/home/hc/anaconda3/envs/sam/bin/python"),
         DeclareLaunchArgument(
             "first_mask_script",
-            default_value="/home/bit/ffs+fp+sam/Grounded-Segment-Anything/ros2_first_mask_node.py",
+            default_value="/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_first_mask_node.py",
         ),
         DeclareLaunchArgument(
             "first_mask_output_dir",
-            default_value="/home/bit/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask",
+            default_value="/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask",
         ),
         DeclareLaunchArgument("first_mask_output_name", default_value="first_mask.png"),
         DeclareLaunchArgument("text_prompt", default_value="blue object"),
@@ -62,12 +62,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "frame_output_dir",
-            default_value="/home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs",
+            default_value="/home/hc/weizi/ffs+fp+sam/fp/stereo_tracker_fast_outputs",
             description="Directory for per-frame fast tracker visualization images and poses.csv.",
         ),
         DeclareLaunchArgument(
             "bert_base_uncased_path",
-            default_value="/home/bit/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594",
+            default_value="/home/hc/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594",
         ),
     ]
 

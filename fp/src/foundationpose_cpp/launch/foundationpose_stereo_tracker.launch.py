@@ -40,7 +40,7 @@ def generate_launch_description():
     launch_args = [
         DeclareLaunchArgument(
             "params_file",
-            default_value="/home/bit/ffs+fp+sam/fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_example.yaml",
+            default_value="/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_example.yaml",
             description="Parameter file for the integrated stereo FoundationPose tracker.",
         ),
         DeclareLaunchArgument(
@@ -55,7 +55,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "conda_executable",
-            default_value="/home/bit/anaconda3/bin/conda",
+            default_value="/home/hc/anaconda3/bin/conda",
             description="Conda executable used for optional Grounded-SAM first-mask generation.",
         ),
         DeclareLaunchArgument(
@@ -70,17 +70,17 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "python_executable",
-            default_value="/home/bit/anaconda3/envs/sam/bin/python",
+            default_value="/home/hc/anaconda3/envs/sam/bin/python",
             description="Python executable for optional Grounded-SAM when use_conda_for_first_mask=false.",
         ),
         DeclareLaunchArgument(
             "first_mask_script",
-            default_value="/home/bit/ffs+fp+sam/Grounded-Segment-Anything/ros2_first_mask_node.py",
+            default_value="/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_first_mask_node.py",
             description="Path to ros2_first_mask_node.py.",
         ),
         DeclareLaunchArgument(
             "first_mask_output_dir",
-            default_value="/home/bit/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask",
+            default_value="/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask",
             description="Directory where Grounded-SAM saves first_mask.png.",
         ),
         DeclareLaunchArgument(
@@ -105,7 +105,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "bert_base_uncased_path",
-            default_value="/home/bit/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594",
+            default_value="/home/hc/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594",
             description="Local bert-base-uncased path used by GroundingDINO to avoid HuggingFace downloads.",
         ),
     ]

@@ -65,21 +65,21 @@ foundationpose_stereo_tracker_fast_node:
 
     stereo_model_type: FAST_FOUNDATION_STEREO
     stereo_engine_file_path:
-      - /home/bit/model/ffs/20-30-48/320-512/feature_runner_fp16_thor.engine
-      - /home/bit/model/ffs/20-30-48/320-512/post_runner_fp16_thor.engine
-    model_input_width: 512
-    model_input_height: 320
+      - /home/hc/model/ffs/23-36-37/feature_runner_fp16_5060.engine
+      - /home/hc/model/ffs/23-36-37/post_runner_fp16_5060.engine
+    model_input_width: 640
+    model_input_height: 448
     min_depth_meters: 0.1
     max_depth_meters: 100.0
-    caminfo_path: /home/bit/ffs+fp+sam/ffs/640.txt
+    caminfo_path: /home/hc/weizi/ffs+fp+sam/ffs/640.txt
 
-    refiner_engine_path: /home/bit/ffs+fp+sam/fp/models/refiner_hwc_dynamic_fp16_thor.engine
-    scorer_engine_path: /home/bit/ffs+fp+sam/fp/models/scorer_hwc_dynamic_fp16_thor.engine
-    mesh_path: /home/bit/dataset/jrnew-blue/mesh/textured_mesh.obj
+    refiner_engine_path: /home/hc/weizi/ffs+fp+sam/fp/models/refiner_hwc_dynamic_fp16_5060.engine
+    scorer_engine_path: /home/hc/weizi/ffs+fp+sam/fp/models/scorer_hwc_dynamic_fp16_5060.engine
+    mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
     object_name: blue carton
 
     mask_image_path: ""
-    mask_image_directory: /home/bit/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask
+    mask_image_directory: /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask
     mask_image_name: first_mask.png
     resize_mask_to_input: false
     mask_poll_interval_ms: 200
@@ -91,7 +91,7 @@ foundationpose_stereo_tracker_fast_node:
     publish_visualization: false
     show_visualization_window: true
     save_frame_outputs: false
-    frame_output_dir: /home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs
+    frame_output_dir: /home/hc/weizi/ffs+fp+sam/fp/stereo_tracker_fast_outputs
     enable_pose_smoothing: true
     pose_smoothing_translation_alpha: 0.45
     pose_smoothing_rotation_alpha: 0.45
