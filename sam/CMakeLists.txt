@@ -120,14 +120,23 @@ if(BUILD_ROS2_NODE)
   add_executable(grounded_sam_first_mask_node
     src/grounded_sam_first_mask_node.cpp
   )
+  add_executable(grounded_sam_multi_first_mask_node
+    src/grounded_sam_multi_first_mask_node.cpp
+  )
   target_link_libraries(grounded_sam_first_mask_node grounded_sam_core)
+  target_link_libraries(grounded_sam_multi_first_mask_node grounded_sam_core)
   ament_target_dependencies(grounded_sam_first_mask_node
     rclcpp
     sensor_msgs
     cv_bridge
   )
+  ament_target_dependencies(grounded_sam_multi_first_mask_node
+    rclcpp
+    sensor_msgs
+    cv_bridge
+  )
 
-  install(TARGETS grounded_sam_first_mask_node
+  install(TARGETS grounded_sam_first_mask_node grounded_sam_multi_first_mask_node
     RUNTIME DESTINATION lib/${PROJECT_NAME}
   )
 endif()

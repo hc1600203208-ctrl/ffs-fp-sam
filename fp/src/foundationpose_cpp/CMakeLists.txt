@@ -135,6 +135,10 @@ if(BUILD_ROS2_NODE)
     src/foundationpose_stereo_tracker_fast_node.cpp
   )
 
+  add_executable(foundationpose_stereo_tracker_multi_node
+    src/foundationpose_stereo_tracker_multi_node.cpp
+  )
+
   add_executable(rgbd_sequence_publisher_node
     src/rgbd_sequence_publisher_node.cpp
   )
@@ -169,6 +173,13 @@ if(BUILD_ROS2_NODE)
   )
 
   target_link_libraries(foundationpose_stereo_tracker_fast_node
+    detection_6d_foundationpose
+    trt_core
+    fast_foundation_stereo_embedded
+    ${OpenCV_LIBS}
+  )
+
+  target_link_libraries(foundationpose_stereo_tracker_multi_node
     detection_6d_foundationpose
     trt_core
     fast_foundation_stereo_embedded
@@ -214,6 +225,16 @@ if(BUILD_ROS2_NODE)
   )
 
   target_include_directories(foundationpose_stereo_tracker_fast_node PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
+    ${FAST_FOUNDATION_STEREO_SOURCE_DIR}/src
+    ${FAST_FOUNDATION_STEREO_SOURCE_DIR}/src/estimator
+    ${OpenCV_INCLUDE_DIRS}
+    ${CUDA_INCLUDE_DIRS}
+    ${TENSORRT_INCLUDE_DIR}
+  )
+
+  target_include_directories(foundationpose_stereo_tracker_multi_node PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
     ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
     ${FAST_FOUNDATION_STEREO_SOURCE_DIR}/src
@@ -279,6 +300,16 @@ if(BUILD_ROS2_NODE)
     tf2
   )
 
+  ament_target_dependencies(foundationpose_stereo_tracker_multi_node
+    rclcpp
+    sensor_msgs
+    geometry_msgs
+    std_msgs
+    cv_bridge
+    message_filters
+    tf2
+  )
+
   ament_target_dependencies(rgbd_sequence_publisher_node
     rclcpp
     sensor_msgs
@@ -306,6 +337,7 @@ if(BUILD_ROS2_NODE)
                   foundationpose_file_mask_tracker_node
                   foundationpose_stereo_tracker_node
                   foundationpose_stereo_tracker_fast_node
+                  foundationpose_stereo_tracker_multi_node
                   fast_foundation_stereo_embedded
                   rgbd_sequence_publisher_node
                   foundationpose_offline_rgbd_node
