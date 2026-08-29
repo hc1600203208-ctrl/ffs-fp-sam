@@ -10,4 +10,10 @@
   --ros-args --params-file /home/hc/weizi/fp/src/foundationpose_cpp/config/foundationpose_file_mask_ros2_example.yaml
 
 
+查看当前的/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/launch/foundationpose_stereo_tracker_fast.launch.py的启动文件，先理解该启动文件的启动流程，然后将当前负责第一帧mask图生成的python脚本，替换为/home/hc/weizi/ffs+fp+sam/sam的c++部署版本，重新在sam中集成ros2，替换掉原来/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_first_mask_node.py的任务
+
+/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/launch/foundationpose_stereo_tracker_fast.launch.py的处理逻辑当前只能对一个物体进行位姿跟踪，当要修改物体时，必须提前准备好新的grounding dino的engine文件，并修改/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_fast_example.yaml配置文件中的mesh_path和object_name，现在我想同时跟踪多个不同的物体，请修改配置文件和代码逻辑，在第一帧进行多次mask提取来获取不同物体的mask区域，之后执行foundationpose推理时要对多个物体同时执行多个并行的跟踪，不同物体可视化时用不同颜色的包围框，三个旋转坐标轴仍然共用红蓝绿，且把物体名字打在物体的左上角，原先imshow显示框左上角打印的位姿输出只打印第一个物体的输出。增加一条要求，尽量不要修改当前工作区的其他代码，给新任务编写新的源文件、yaml配置文件和launch启动脚本。同时先用/home/hc/bag/bluepink bag包做测试bag，该bag中图像包含有blue carton和pink carton两个物体；mesh路径分别为blue carton: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
+pink carton: /home/hc/dataset/myobject/lgj/bundlesdf_540/textured_mesh.obj ;engine文件路径为/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_blue_carton.engine和/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_pink_carton.engine
+
+
 

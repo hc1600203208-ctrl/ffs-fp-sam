@@ -1,0 +1,11 @@
+{
+  "prompt": "pink carton",
+  "config_path": "/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py",
+  "checkpoint": "/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/groundingdino_swint_ogc.pth",
+  "dino_input": [
+    800,
+    1066
+  ],
+  "mask_input_type": "float",
+  "fixed_mask": true
+}

@@ -1,35 +1,55 @@
-import launch
+from pathlib import Path
 
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+import launch
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+
+
+_MASK_IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
+
+
+def _is_true(value):
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _clean_first_mask_output_dir(context, *args, **kwargs):
+    if not _is_true(kwargs["run_first_mask"].perform(context)):
+        return []
+
+    output_dir = Path(kwargs["first_mask_output_dir"].perform(context)).expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    removed_count = 0
+    for path in output_dir.iterdir():
+        if path.is_file() and path.suffix.lower() in _MASK_IMAGE_SUFFIXES:
+            path.unlink()
+            removed_count += 1
+
+    logger = launch.logging.get_logger("foundationpose_stereo_tracker_fast.launch")
+    logger.info(f"Cleaned {removed_count} old first-mask image(s) from {output_dir}")
+    return []
 
 
 def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     run_first_mask = LaunchConfiguration("run_first_mask")
-    use_conda_for_first_mask = LaunchConfiguration("use_conda_for_first_mask")
-    conda_executable = LaunchConfiguration("conda_executable")
-    conda_env_name = LaunchConfiguration("conda_env_name")
     left_image_topic = LaunchConfiguration("left_image_topic")
-    python_executable = LaunchConfiguration("python_executable")
-    first_mask_script = LaunchConfiguration("first_mask_script")
     first_mask_output_dir = LaunchConfiguration("first_mask_output_dir")
     first_mask_output_name = LaunchConfiguration("first_mask_output_name")
-    text_prompt = LaunchConfiguration("text_prompt")
+    mask_topic = LaunchConfiguration("mask_topic")
+    publish_mask_topic = LaunchConfiguration("publish_mask_topic")
+    dino_engine = LaunchConfiguration("dino_engine")
+    sam_encoder_engine = LaunchConfiguration("sam_encoder_engine")
+    sam_decoder_engine = LaunchConfiguration("sam_decoder_engine")
+    input_width = LaunchConfiguration("input_width")
+    input_height = LaunchConfiguration("input_height")
     box_threshold = LaunchConfiguration("box_threshold")
-    text_threshold = LaunchConfiguration("text_threshold")
-    bert_base_uncased_path = LaunchConfiguration("bert_base_uncased_path")
+    max_detections = LaunchConfiguration("max_detections")
     save_frame_outputs = LaunchConfiguration("save_frame_outputs")
     frame_output_dir = LaunchConfiguration("frame_output_dir")
-    run_first_mask_with_conda = PythonExpression(
-        ["'", run_first_mask, "' == 'true' and '", use_conda_for_first_mask, "' == 'true'"]
-    )
-    run_first_mask_without_conda = PythonExpression(
-        ["'", run_first_mask, "' == 'true' and '", use_conda_for_first_mask, "' == 'false'"]
-    )
 
     launch_args = [
         DeclareLaunchArgument(
@@ -38,23 +58,30 @@ def generate_launch_description():
             description="Parameter file for the fast integrated stereo FoundationPose tracker.",
         ),
         DeclareLaunchArgument("run_first_mask", default_value="true"),
-        DeclareLaunchArgument("use_conda_for_first_mask", default_value="true"),
-        DeclareLaunchArgument("conda_executable", default_value="/home/hc/anaconda3/bin/conda"),
-        DeclareLaunchArgument("conda_env_name", default_value="sam"),
         DeclareLaunchArgument("left_image_topic", default_value="/left/image_raw"),
-        DeclareLaunchArgument("python_executable", default_value="/home/hc/anaconda3/envs/sam/bin/python"),
-        DeclareLaunchArgument(
-            "first_mask_script",
-            default_value="/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_first_mask_node.py",
-        ),
         DeclareLaunchArgument(
             "first_mask_output_dir",
             default_value="/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask",
         ),
         DeclareLaunchArgument("first_mask_output_name", default_value="first_mask.png"),
-        DeclareLaunchArgument("text_prompt", default_value="blue object"),
-        DeclareLaunchArgument("box_threshold", default_value="0.7"),
-        DeclareLaunchArgument("text_threshold", default_value="0.4"),
+        DeclareLaunchArgument("mask_topic", default_value="/fisrt_mask"),
+        DeclareLaunchArgument("publish_mask_topic", default_value="true"),
+        DeclareLaunchArgument(
+            "dino_engine",
+            default_value="/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_prompt.engine",
+        ),
+        DeclareLaunchArgument(
+            "sam_encoder_engine",
+            default_value="/home/hc/weizi/ffs+fp+sam/sam/engines/sam_image_encoder.engine",
+        ),
+        DeclareLaunchArgument(
+            "sam_decoder_engine",
+            default_value="/home/hc/weizi/ffs+fp+sam/sam/engines/sam_mask_decoder.engine",
+        ),
+        DeclareLaunchArgument("input_width", default_value="640"),
+        DeclareLaunchArgument("input_height", default_value="480"),
+        DeclareLaunchArgument("box_threshold", default_value="0.3"),
+        DeclareLaunchArgument("max_detections", default_value="16"),
         DeclareLaunchArgument(
             "save_frame_outputs",
             default_value="false",
@@ -65,54 +92,40 @@ def generate_launch_description():
             default_value="/home/hc/weizi/ffs+fp+sam/fp/stereo_tracker_fast_outputs",
             description="Directory for per-frame fast tracker visualization images and poses.csv.",
         ),
-        DeclareLaunchArgument(
-            "bert_base_uncased_path",
-            default_value="/home/hc/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594",
-        ),
     ]
 
-    first_mask_ros_args = [
-        first_mask_script,
-        "--ros-args",
-        "-p",
-        ["image_topic:=", left_image_topic],
-        "-p",
-        "publish_mask_topic:=false",
-        "-p",
-        ["output_dir:=", first_mask_output_dir],
-        "-p",
-        ["output_name:=", first_mask_output_name],
-        "-p",
-        ["text_prompt:=", text_prompt],
-        "-p",
-        ["box_threshold:=", box_threshold],
-        "-p",
-        ["text_threshold:=", text_threshold],
-        "-p",
-        ["bert_base_uncased_path:=", bert_base_uncased_path],
-    ]
-
-    first_mask_conda_process = ExecuteProcess(
-        cmd=[
-            conda_executable,
-            "run",
-            "--no-capture-output",
-            "-n",
-            conda_env_name,
-            "python",
-            *first_mask_ros_args,
-        ],
+    first_mask_node = Node(
+        package="grounded_sam_trt",
+        executable="grounded_sam_first_mask_node",
+        name="grounded_sam_first_mask_node",
         output="screen",
-        condition=IfCondition(run_first_mask_with_conda),
+        condition=IfCondition(run_first_mask),
+        parameters=[
+            {
+                "image_topic": left_image_topic,
+                "mask_topic": mask_topic,
+                "publish_mask_topic": ParameterValue(
+                    publish_mask_topic, value_type=bool
+                ),
+                "output_dir": first_mask_output_dir,
+                "output_name": first_mask_output_name,
+                "dino_engine": dino_engine,
+                "sam_encoder_engine": sam_encoder_engine,
+                "sam_decoder_engine": sam_decoder_engine,
+                "input_width": ParameterValue(input_width, value_type=int),
+                "input_height": ParameterValue(input_height, value_type=int),
+                "box_threshold": ParameterValue(box_threshold, value_type=float),
+                "max_detections": ParameterValue(max_detections, value_type=int),
+            }
+        ],
     )
 
-    first_mask_python_process = ExecuteProcess(
-        cmd=[
-            python_executable,
-            *first_mask_ros_args,
-        ],
-        output="screen",
-        condition=IfCondition(run_first_mask_without_conda),
+    clean_first_mask_output_dir = OpaqueFunction(
+        function=_clean_first_mask_output_dir,
+        kwargs={
+            "run_first_mask": run_first_mask,
+            "first_mask_output_dir": first_mask_output_dir,
+        },
     )
 
     tracker_node = Node(
@@ -125,8 +138,18 @@ def generate_launch_description():
             {
                 "save_frame_outputs": ParameterValue(save_frame_outputs, value_type=bool),
                 "frame_output_dir": frame_output_dir,
+                "mask_image_path": "",
+                "mask_image_directory": first_mask_output_dir,
+                "mask_image_name": first_mask_output_name,
             },
         ],
     )
 
-    return launch.LaunchDescription(launch_args + [first_mask_conda_process, first_mask_python_process, tracker_node])
+    return launch.LaunchDescription(
+        launch_args
+        + [
+            clean_first_mask_output_dir,
+            first_mask_node,
+            tracker_node,
+        ]
+    )

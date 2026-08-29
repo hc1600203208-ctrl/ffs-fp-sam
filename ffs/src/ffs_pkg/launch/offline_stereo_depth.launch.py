@@ -9,7 +9,7 @@ def generate_launch_description():
     launch_args = [
         DeclareLaunchArgument(
             "engine_file_path",
-            default_value='["/home/bit/model/ffs/20-30-48/320-512/feature_runner_fp16_thor.engine", "/home/bit/model/ffs/20-30-48/320-512/post_runner_fp16_thor.engine"]',
+           default_value='["/home/hc/model/ffs/23-36-37/feature_runner_fp16_5060.engine", "/home/hc/model/ffs/23-36-37/post_runner_fp16_5060.engine"]',
             description="The absolute file path to the TensorRT engine files",
         ),
         DeclareLaunchArgument(
@@ -50,27 +50,27 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "caminfo_path",
-            default_value="640.txt",
+            default_value="jr714.txt",
             description="Path to stereo calibration txt file",
         ),
         DeclareLaunchArgument(
             "input_image_width",
-            default_value="640",
+            default_value="1920",
             description="Expected input image width",
         ),
         DeclareLaunchArgument(
             "input_image_height",
-            default_value="480",
+            default_value="1080",
             description="Expected input image height",
         ),
         DeclareLaunchArgument(
             "model_input_width",
-            default_value="512",
+            default_value="640",
             description="The model input width",
         ),
         DeclareLaunchArgument(
             "model_input_height",
-            default_value="320",
+            default_value="448",
             description="The model input height",
         ),
         DeclareLaunchArgument(

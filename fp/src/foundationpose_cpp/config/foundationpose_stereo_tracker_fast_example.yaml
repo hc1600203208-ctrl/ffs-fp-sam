@@ -76,7 +76,9 @@ foundationpose_stereo_tracker_fast_node:
     refiner_engine_path: /home/hc/weizi/ffs+fp+sam/fp/models/refiner_hwc_dynamic_fp16_5060.engine
     scorer_engine_path: /home/hc/weizi/ffs+fp+sam/fp/models/scorer_hwc_dynamic_fp16_5060.engine
     mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
+    # mesh_path: /home/hc/dataset/myobject/lgj/bundlesdf_540/textured_mesh.obj
     object_name: blue carton
+    # object_name: pink carton
 
     mask_image_path: ""
     mask_image_directory: /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask
