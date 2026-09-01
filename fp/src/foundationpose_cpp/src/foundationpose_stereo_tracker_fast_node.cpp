@@ -1421,11 +1421,11 @@ int main(int argc, char **argv)
   {
     rclcpp::spin(std::make_shared<FoundationPoseStereoTrackerFastNode>());
   }
-  catch (const std::exception &)
+  catch (const std::exception &e)
   {
-    // RCLCPP_FATAL(rclcpp::get_logger("foundationpose_stereo_tracker_fast_node"),
-    //              "Node startup failed: %s",
-    //              e.what());
+    RCLCPP_FATAL(rclcpp::get_logger("foundationpose_stereo_tracker_fast_node"),
+                 "Node startup failed: %s",
+                 e.what());
     rclcpp::shutdown();
     return 1;
   }

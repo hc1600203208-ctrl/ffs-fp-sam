@@ -1,0 +1,14 @@
+stereo_render_cpp_node:
+  ros__parameters:
+    mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh1/textured_mesh.obj
+    calibration_path: /home/hc/weizi/ffs+fp+sam/ffs/640.txt
+    width: 640
+    height: 480
+    fps: 30.0
+    left_image_topic: /sim/left/image_raw
+    right_image_topic: /sim/right/image_raw
+    left_camera_info_topic: /sim/left/camera_info
+    right_camera_info_topic: /sim/right/camera_info
+    frame_id_left: stereo_left_optical_frame
+    frame_id_right: stereo_right_optical_frame
+    interactive: true

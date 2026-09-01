@@ -217,6 +217,8 @@ install(DIRECTORY
 
 install(PROGRAMS
   scripts/depth_inspector.py
+  scripts/batch_stereo_rectification_vis.py
+  scripts/batch_evaluate_stack.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

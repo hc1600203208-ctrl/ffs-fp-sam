@@ -2,6 +2,10 @@
 build/
 install/
 log/
+CMakeFiles/
+AMENT_IGNORE
+ros2_build/
+ros2_install/
 **/build/
 **/install/
 **/log/
@@ -13,6 +17,7 @@ log/
 *.dylib
 *.exe
 *.out
+*.csv
 compile_commands.json
 
 # Python and tool caches
