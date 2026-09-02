@@ -1,13 +1,22 @@
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
-#include <cstdlib>
+#include <cerrno>
+#include <cmath>
 #include <cstring>
+#include <fcntl.h>
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
+#include <poll.h>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <unistd.h>
+#include <vector>
 
 #include <builtin_interfaces/msg/time.hpp>
 #include <Eigen/Dense>
@@ -107,6 +116,58 @@ Eigen::Quaternionf ToQuaternion(const Eigen::Matrix4f &pose)
   return q;
 }
 
+std::vector<std::string> SplitWords(const std::string &line)
+{
+  std::istringstream ss(line);
+  std::vector<std::string> words;
+  std::string word;
+  while (ss >> word)
+  {
+    words.push_back(word);
+  }
+  return words;
+}
+
+bool ParseSixFloats(const std::vector<std::string> &tokens,
+                    size_t start_index,
+                    std::array<float, 6> *values)
+{
+  if (values == nullptr || tokens.size() < start_index + values->size())
+  {
+    return false;
+  }
+  for (size_t i = 0; i < values->size(); ++i)
+  {
+    try
+    {
+      (*values)[i] = std::stof(tokens[start_index + i]);
+    }
+    catch (const std::exception &)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+Eigen::Vector3f DegreesToRadians(const Eigen::Vector3f &deg)
+{
+  constexpr float kPi = 3.14159265358979323846F;
+  return deg * (kPi / 180.0F);
+}
+
+void PrintMotionProfile(const MotionProfile &motion, bool running, double motion_time_sec)
+{
+  std::cout << (running ? "running" : "paused")
+            << ", motion_time=" << motion_time_sec << "s\n";
+  std::cout << "base_translation: " << motion.base_translation.transpose() << "\n";
+  std::cout << "base_rpy_rad: " << motion.base_rpy_rad.transpose() << "\n";
+  std::cout << "trans_amp: " << motion.trans_amp.transpose() << "\n";
+  std::cout << "trans_freq: " << motion.trans_freq.transpose() << "\n";
+  std::cout << "rot_amp_rad: " << motion.rot_amp_rad.transpose() << "\n";
+  std::cout << "rot_freq: " << motion.rot_freq.transpose() << std::endl;
+}
+
 } // namespace
 
 class StereoRenderNode : public rclcpp::Node
@@ -153,22 +214,361 @@ public:
     if (interactive_)
     {
       motion_ = MotionProfile::PromptFromStdin();
+      motion_running_ = false;
+      motion_elapsed_sec_ = 0.0;
+      motion_run_started_at_ = std::chrono::steady_clock::now();
+    }
+    else
+    {
+      motion_running_ = true;
+      motion_elapsed_sec_ = 0.0;
+      motion_run_started_at_ = std::chrono::steady_clock::now();
     }
 
-    start_time_ = std::chrono::steady_clock::now();
     const auto period = std::chrono::duration<double>(1.0 / std::max(1e-3, fps_));
     timer_ = create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(period),
                                std::bind(&StereoRenderNode::OnTimer, this));
 
+    if (interactive_)
+    {
+      command_loop_running_.store(true);
+      command_thread_ = std::thread(&StereoRenderNode::CommandLoop, this);
+      RCLCPP_INFO(get_logger(),
+                  "Interactive mode enabled. Commands: start | pause | toggle | show | reset | quit");
+      RCLCPP_INFO(get_logger(), "Motion is paused until you type 'start' or 'toggle'.");
+    }
+
     RCLCPP_INFO(get_logger(), "Stereo C++ renderer running at %.1f Hz", fps_);
   }
 
+  ~StereoRenderNode() override
+  {
+    StopCommandLoop();
+  }
+
 private:
+  void StopCommandLoop()
+  {
+    command_loop_running_.store(false);
+    if (command_thread_.joinable())
+    {
+      command_thread_.join();
+    }
+  }
+
+  double MotionElapsedSec()
+  {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    double elapsed = motion_elapsed_sec_;
+    if (motion_running_)
+    {
+      elapsed += std::chrono::duration<double>(now - motion_run_started_at_).count();
+    }
+    return elapsed;
+  }
+
+  Eigen::Matrix4f CurrentPose()
+  {
+    MotionProfile motion;
+    {
+      std::lock_guard<std::mutex> lock(motion_mutex_);
+      motion = motion_;
+    }
+    return motion.PoseAt(MotionElapsedSec());
+  }
+
+  void UpdateMotionProfile(const MotionProfile &motion)
+  {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    motion_ = motion;
+    motion_elapsed_sec_ = 0.0;
+    if (motion_running_)
+    {
+      motion_run_started_at_ = now;
+    }
+  }
+
+  void StartMotion()
+  {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    if (motion_running_)
+    {
+      return;
+    }
+    motion_running_ = true;
+    motion_run_started_at_ = now;
+  }
+
+  void PauseMotion()
+  {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    if (!motion_running_)
+    {
+      return;
+    }
+    motion_elapsed_sec_ += std::chrono::duration<double>(now - motion_run_started_at_).count();
+    motion_running_ = false;
+  }
+
+  void ToggleMotion()
+  {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(motion_mutex_);
+    if (motion_running_)
+    {
+      motion_elapsed_sec_ += std::chrono::duration<double>(now - motion_run_started_at_).count();
+      motion_running_ = false;
+    }
+    else
+    {
+      motion_running_ = true;
+      motion_run_started_at_ = now;
+    }
+  }
+
+  void ResetMotion()
+  {
+    PauseMotion();
+    UpdateMotionProfile(MotionProfile{});
+  }
+
+  void ApplyPoseCommand(const std::array<float, 6> &values)
+  {
+    MotionProfile current;
+    {
+      std::lock_guard<std::mutex> lock(motion_mutex_);
+      current = motion_;
+    }
+    MotionProfile updated = current;
+    updated.base_translation = Eigen::Vector3f(values[0], values[1], values[2]);
+    updated.base_rpy_rad = DegreesToRadians(Eigen::Vector3f(values[3], values[4], values[5]));
+    UpdateMotionProfile(updated);
+  }
+
+  void ApplyAmpCommand(const std::array<float, 6> &values)
+  {
+    MotionProfile current;
+    {
+      std::lock_guard<std::mutex> lock(motion_mutex_);
+      current = motion_;
+    }
+    MotionProfile updated = current;
+    updated.trans_amp = Eigen::Vector3f(values[0], values[1], values[2]);
+    updated.rot_amp_rad = DegreesToRadians(Eigen::Vector3f(values[3], values[4], values[5]));
+    UpdateMotionProfile(updated);
+  }
+
+  void ApplyFreqCommand(const std::array<float, 6> &values)
+  {
+    MotionProfile current;
+    {
+      std::lock_guard<std::mutex> lock(motion_mutex_);
+      current = motion_;
+    }
+    MotionProfile updated = current;
+    updated.trans_freq = Eigen::Vector3f(values[0], values[1], values[2]);
+    updated.rot_freq = Eigen::Vector3f(values[3], values[4], values[5]);
+    UpdateMotionProfile(updated);
+  }
+
+  void ProcessCommand(const std::string &line)
+  {
+    const auto tokens = SplitWords(line);
+    if (tokens.empty())
+    {
+      return;
+    }
+
+    const std::string &cmd = tokens[0];
+    if (cmd == "help")
+    {
+      std::cout << "Commands: help | show | start | pause | toggle | "
+                   "pose x y z roll pitch yaw | amp tx ty tz roll pitch yaw | "
+                   "freq fx fy fz fr fp fyaw | reset | quit"
+                << std::endl;
+      return;
+    }
+
+    if (cmd == "show")
+    {
+      MotionProfile current;
+      bool running = false;
+      double motion_time = 0.0;
+      {
+        std::lock_guard<std::mutex> lock(motion_mutex_);
+        current = motion_;
+        running = motion_running_;
+        motion_time = motion_elapsed_sec_;
+        if (motion_running_)
+        {
+          motion_time += std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - motion_run_started_at_).count();
+        }
+      }
+      PrintMotionProfile(current, running, motion_time);
+      return;
+    }
+
+    if (cmd == "start")
+    {
+      StartMotion();
+      std::cout << "Motion started." << std::endl;
+      return;
+    }
+
+    if (cmd == "pause")
+    {
+      PauseMotion();
+      std::cout << "Motion paused." << std::endl;
+      return;
+    }
+
+    if (cmd == "toggle")
+    {
+      ToggleMotion();
+      std::cout << "Motion toggled." << std::endl;
+      return;
+    }
+
+    if (cmd == "reset")
+    {
+      ResetMotion();
+      std::cout << "Motion reset to defaults and paused." << std::endl;
+      return;
+    }
+
+    if (cmd == "quit")
+    {
+      command_loop_running_.store(false);
+      rclcpp::shutdown();
+      return;
+    }
+
+    std::array<float, 6> values{};
+    if (cmd == "pose")
+    {
+      if (ParseSixFloats(tokens, 1, &values))
+      {
+        ApplyPoseCommand(values);
+        std::cout << "Updated motion profile." << std::endl;
+      }
+      else
+      {
+        std::cout << "Usage: pose x y z roll pitch yaw" << std::endl;
+      }
+      return;
+    }
+
+    if (cmd == "amp")
+    {
+      if (ParseSixFloats(tokens, 1, &values))
+      {
+        ApplyAmpCommand(values);
+        std::cout << "Updated motion profile." << std::endl;
+      }
+      else
+      {
+        std::cout << "Usage: amp tx ty tz roll pitch yaw" << std::endl;
+      }
+      return;
+    }
+
+    if (cmd == "freq")
+    {
+      if (ParseSixFloats(tokens, 1, &values))
+      {
+        ApplyFreqCommand(values);
+        std::cout << "Updated motion profile." << std::endl;
+      }
+      else
+      {
+        std::cout << "Usage: freq fx fy fz fr fp fyaw" << std::endl;
+      }
+      return;
+    }
+
+    std::cout << "Unknown command: " << cmd << std::endl;
+  }
+
+  void CommandLoop()
+  {
+    int tty_fd = ::open("/dev/tty", O_RDONLY | O_NONBLOCK);
+    if (tty_fd < 0)
+    {
+      RCLCPP_WARN(get_logger(), "Failed to open /dev/tty for interactive commands: %s",
+                  std::strerror(errno));
+      return;
+    }
+
+    std::string buffer;
+    std::cout << "Type 'help' for commands." << std::endl;
+
+    while (rclcpp::ok() && command_loop_running_.load())
+    {
+      pollfd pfd;
+      pfd.fd = tty_fd;
+      pfd.events = POLLIN;
+      pfd.revents = 0;
+
+      const int poll_ret = ::poll(&pfd, 1, 200);
+      if (poll_ret < 0)
+      {
+        if (errno == EINTR)
+        {
+          continue;
+        }
+        RCLCPP_WARN(get_logger(), "poll(/dev/tty) failed: %s", std::strerror(errno));
+        break;
+      }
+      if (poll_ret == 0)
+      {
+        continue;
+      }
+
+      char read_buf[256];
+      const ssize_t n_read = ::read(tty_fd, read_buf, sizeof(read_buf));
+      if (n_read < 0)
+      {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+        {
+          continue;
+        }
+        RCLCPP_WARN(get_logger(), "read(/dev/tty) failed: %s", std::strerror(errno));
+        break;
+      }
+      if (n_read == 0)
+      {
+        continue;
+      }
+
+      for (ssize_t i = 0; i < n_read; ++i)
+      {
+        const char ch = read_buf[i];
+        if (ch == '\r' || ch == '\n')
+        {
+          if (!buffer.empty())
+          {
+            ProcessCommand(buffer);
+            buffer.clear();
+          }
+        }
+        else
+        {
+          buffer.push_back(ch);
+        }
+      }
+    }
+
+    ::close(tty_fd);
+  }
+
   void OnTimer()
   {
-    const auto wall_now = std::chrono::steady_clock::now();
-    const double t_sec = std::chrono::duration<double>(wall_now - start_time_).count();
-    const Eigen::Matrix4f left_pose = motion_.PoseAt(t_sec);
+    const Eigen::Matrix4f left_pose = CurrentPose();
     const Eigen::Matrix4f right_pose = right_from_left_ * left_pose;
 
     cv::Mat left_bgr = renderer_->RenderBgr(left_pose, left_k_);
@@ -210,6 +610,7 @@ private:
   int height_ = 0;
   double fps_ = 30.0;
   bool interactive_ = true;
+  std::atomic<bool> command_loop_running_{false};
 
   std::string left_image_topic_;
   std::string right_image_topic_;
@@ -226,8 +627,12 @@ private:
   sensor_msgs::msg::CameraInfo left_info_;
   sensor_msgs::msg::CameraInfo right_info_;
 
+  std::mutex motion_mutex_;
   MotionProfile motion_;
-  std::chrono::steady_clock::time_point start_time_;
+  bool motion_running_ = false;
+  double motion_elapsed_sec_ = 0.0;
+  std::chrono::steady_clock::time_point motion_run_started_at_;
+  std::thread command_thread_;
   std::shared_ptr<StereoMeshRenderer> renderer_;
 
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr left_pub_;

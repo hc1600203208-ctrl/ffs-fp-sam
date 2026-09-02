@@ -45,9 +45,9 @@ For one `640x480` RGB image, run:
 
 ```bash
 GS_DINO_DEBUG=1 ./build/grounded_sam_demo \
-  --input /path/to/image.png \
+  --input ~/0022.png \
   --output_dir /tmp/grounded_sam_output \
-  --dino_engine ./engines/grounding_dino_fixed_prompt.engine \
+  --dino_engine ./engines/grounding_dino_fixed_pink_carton.engine \
   --sam_encoder_engine ./engines/sam_image_encoder.engine \
   --sam_decoder_engine ./engines/sam_mask_decoder.engine \
   --box_threshold 0.3 \

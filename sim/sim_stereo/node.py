@@ -97,12 +97,13 @@ class StereoRenderNode(Node):
 
         self.motion = MotionProfile.default()
         self._motion_lock = threading.Lock()
-        self._start_time = time.monotonic()
+        self._motion_elapsed_sec = 0.0
+        self._motion_running = False
+        self._motion_run_started_at: float | None = None
 
         self.interactive = bool(self.get_parameter("interactive").value)
         if self.interactive:
             self.motion = MotionProfile.from_user_input()
-            self._start_time = time.monotonic()
             self._stdin_thread = threading.Thread(target=self._command_loop, daemon=True)
             self._stdin_thread.start()
 
@@ -139,11 +140,53 @@ class StereoRenderNode(Node):
         msg.data = image.tobytes()
         return msg
 
+    def _motion_now(self) -> float:
+        with self._motion_lock:
+            elapsed = self._motion_elapsed_sec
+            running = self._motion_running
+            run_started_at = self._motion_run_started_at
+        if running and run_started_at is not None:
+            elapsed += time.monotonic() - run_started_at
+        return elapsed
+
     def _current_pose(self) -> np.ndarray:
         with self._motion_lock:
             motion = self.motion
-        elapsed = time.monotonic() - self._start_time
+        elapsed = self._motion_now()
         return motion.pose_at(elapsed)
+
+    def _update_motion_profile(self, motion: MotionProfile) -> None:
+        now = time.monotonic()
+        with self._motion_lock:
+            self.motion = motion
+            self._motion_elapsed_sec = 0.0
+            self._motion_run_started_at = now if self._motion_running else None
+
+    def _start_motion(self) -> None:
+        now = time.monotonic()
+        with self._motion_lock:
+            if self._motion_running:
+                return
+            self._motion_running = True
+            self._motion_run_started_at = now
+
+    def _pause_motion(self) -> None:
+        now = time.monotonic()
+        with self._motion_lock:
+            if not self._motion_running:
+                return
+            if self._motion_run_started_at is not None:
+                self._motion_elapsed_sec += now - self._motion_run_started_at
+            self._motion_running = False
+            self._motion_run_started_at = None
+
+    def _toggle_motion(self) -> None:
+        with self._motion_lock:
+            running = self._motion_running
+        if running:
+            self._pause_motion()
+        else:
+            self._start_motion()
 
     def _on_timer(self) -> None:
         pose = self._current_pose()
@@ -174,11 +217,12 @@ class StereoRenderNode(Node):
 
     def _command_loop(self) -> None:
         help_text = (
-            "Commands: help | show | pose x y z roll pitch yaw | "
+            "Commands: help | show | start | pause | toggle | pose x y z roll pitch yaw | "
             "amp tx ty tz roll pitch yaw | freq fx fy fz fr fp fyaw | "
             "reset | quit"
         )
         print(help_text)
+        print("Motion is paused until you type 'start' or 'toggle'.")
         while rclpy.ok():
             try:
                 line = input("> ").strip()
@@ -194,12 +238,30 @@ class StereoRenderNode(Node):
             if cmd == "show":
                 with self._motion_lock:
                     motion = self.motion
+                    running = self._motion_running
+                    elapsed = self._motion_elapsed_sec
+                    run_started_at = self._motion_run_started_at
+                if running and run_started_at is not None:
+                    elapsed += time.monotonic() - run_started_at
+                state = "running" if running else "paused"
+                print(f"{state}, motion_time={elapsed:.3f}s")
                 print(motion)
                 continue
+            if cmd == "start":
+                self._start_motion()
+                print("Motion started.")
+                continue
+            if cmd == "pause":
+                self._pause_motion()
+                print("Motion paused.")
+                continue
+            if cmd == "toggle":
+                self._toggle_motion()
+                print("Motion toggled.")
+                continue
             if cmd == "reset":
-                with self._motion_lock:
-                    self.motion = MotionProfile.default()
-                self._start_time = time.monotonic()
+                self._pause_motion()
+                self._update_motion_profile(MotionProfile.default())
                 print("Motion reset to defaults.")
                 continue
             if cmd == "quit":
@@ -212,8 +274,9 @@ class StereoRenderNode(Node):
                 continue
             with self._motion_lock:
                 motion = self.motion
-                if cmd == "pose" and len(values) == 6:
-                    motion = MotionProfile(
+            if cmd == "pose" and len(values) == 6:
+                self._update_motion_profile(
+                    MotionProfile(
                         base_translation=np.asarray(values[:3], dtype=np.float64),
                         base_rpy_rad=np.deg2rad(np.asarray(values[3:], dtype=np.float64)),
                         trans_amp=motion.trans_amp,
@@ -221,9 +284,10 @@ class StereoRenderNode(Node):
                         rot_amp_rad=motion.rot_amp_rad,
                         rot_freq=motion.rot_freq,
                     )
-                    self._start_time = time.monotonic()
-                elif cmd == "amp" and len(values) == 6:
-                    motion = MotionProfile(
+                )
+            elif cmd == "amp" and len(values) == 6:
+                self._update_motion_profile(
+                    MotionProfile(
                         base_translation=motion.base_translation,
                         base_rpy_rad=motion.base_rpy_rad,
                         trans_amp=np.asarray(values[:3], dtype=np.float64),
@@ -231,9 +295,10 @@ class StereoRenderNode(Node):
                         rot_amp_rad=np.deg2rad(np.asarray(values[3:], dtype=np.float64)),
                         rot_freq=motion.rot_freq,
                     )
-                    self._start_time = time.monotonic()
-                elif cmd == "freq" and len(values) == 6:
-                    motion = MotionProfile(
+                )
+            elif cmd == "freq" and len(values) == 6:
+                self._update_motion_profile(
+                    MotionProfile(
                         base_translation=motion.base_translation,
                         base_rpy_rad=motion.base_rpy_rad,
                         trans_amp=motion.trans_amp,
@@ -241,11 +306,10 @@ class StereoRenderNode(Node):
                         rot_amp_rad=motion.rot_amp_rad,
                         rot_freq=np.asarray(values[3:], dtype=np.float64),
                     )
-                    self._start_time = time.monotonic()
-                else:
-                    print("Usage: pose x y z roll pitch yaw | amp tx ty tz roll pitch yaw | freq fx fy fz fr fp fyaw")
-                    continue
-                self.motion = motion
+                )
+            else:
+                print("Usage: pose x y z roll pitch yaw | amp tx ty tz roll pitch yaw | freq fx fy fz fr fp fyaw")
+                continue
             print("Updated motion profile.")
 
     def destroy_node(self) -> bool:

@@ -1,19 +1,12 @@
+# ffs使用说明
 ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
-dataset_root:=/home/hc/dataset/myobject/lgj_fast2_all \
+dataset_root:=/home/hc/dataset/myobject/weixing \
 caminfo_path:=/home/hc/dataset/myobject/penqi/jr714.txt
-
-ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
-dataset_root:=/home/hc/dataset/myobject/oxi_fast \
-caminfo_path:=/home/hc/dataset/myobject/penqi/jr714.txt
-
-ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
-dataset_root:=/home/hc/picture \
-caminfo_path:=/home/hc/dataset/myobject/penqi/jr714.txt
-
-python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/depth_inspector.py --rgb-dir /home/hc/dataset/myobject/fluke_2/rgb --depth-dir /home/hc/dataset/myobject/fluke_2/depth
-
+# 进行深度图和rgb图对应可视化
+python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/depth_inspector.py --rgb-dir /home/hc/dataset/myobject/weixing/rgb --depth-dir /home/hc/dataset/myobject/weixing/depth
+# 进行极限校正可视化结果
 python /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_stereo_rectification_vis.py --caminfo-path /home/hc/dataset/myobject/fluke/jr714.txt --left-dir /home/hc/dataset/myobject/fluke/rgb --right-dir /home/hc/dataset/myobject/fluke/camera2 --output-dir /home/hc/dataset/myobject/fluke/rect
-
+# 运行单次sam命令
 python /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/sam.py \
   --config GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py \
   --grounded_checkpoint groundingdino_swint_ogc.pth \
@@ -25,7 +18,9 @@ python /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/sam.py \
   --text_prompt "blue carton " \
   --device "cuda"
 
-python /home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/tools/export_trimesh_oriented_bounds.py /home/hc/weizi/dataset/jrnew-blue/mesh1/textured_mesh.obj --output-dir /home/hc/weizi/dataset/jrnew-blue/mesh1
+# 生成extents.txt
+
+python /home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/tools/export_trimesh_oriented_bounds.py /home/hc/dataset/myobject/weixing1/bundlesdf720/textured_mesh.obj
 
 ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py \
   run_first_mask:=true \
@@ -40,7 +35,7 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py \
   first_mask_text_prompt:="blue carton" \
   bert_base_uncased_path:=/home/hc/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594
 
-
+# 运行批量评估脚本命令
 python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/lgj   --tracking_dataset_root /home/hc/dataset/myobject/lgj --bundle_shorter_side 720
 
  python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py   /home/hc/dataset/myobject/lgj   --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction   --tracking_dataset_root /home/hc/dataset/myobject/lgj_fast2   --foundationpose_depth_source tracking_dataset   --overwrite  --fp_fps 20
@@ -50,14 +45,20 @@ python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.p
 
 python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py   /home/hc/dataset/myobject/fluke_2  --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction   --tracking_dataset_root /home/hc/dataset/myobject/fluke_fast2   --foundationpose_depth_source tracking_dataset   --overwrite  --fp_fps 20    --fp_render_mode faces
 
-python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/oxi   --tracking_dataset_root /home/hc/dataset/myobject/oxi --bundle_shorter_side 720
+python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/oxi   --tracking_dataset_root /home/hc/dataset/myobject/oxi --bundle_shorter_side 720 --fp_fps 12  --fp_render_mode faces 
 
-python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/gold_2   --tracking_dataset_root /home/hc/dataset/myobject/gold_2 --bundle_shorter_side 720
+python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/weizi/dataset/jrnew-blue  --tracking_dataset_root /home/hc/dataset/myobject/blue_fast --bundle_shorter_side 720 --fp_fps 12  --fp_render_mode faces  --allow_dirty_bundlesdf
 
  python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py   /home/hc/dataset/myobject/lgj   --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction   --tracking_dataset_root /home/hc/dataset/myobject/lgj_fast2 --foundationpose_depth_source tracking_dataset   --overwrite  --fp_fps 20  --fp_render_mode faces --fp_q_omega 3e-2 --best_method confidence_full_threshold_sweep/threshold_0_35
 
  cd /home/hc/weizi/ffs+fp+sam/sam
+ # 生成dino 和sam engine文件
 
+ ./build_engines.sh
+# 生成dino onnx文件
+cd ~/weizi/ffs+fp+sam/sam
+./scripts/export_dino.sh
+# 单次c++部署sam测试
 ./build/grounded_sam_demo \
   --input /home/hc/weizi/dataset/jrnew-blue/rgb/0000.png \
   --output_dir demo_outputs \
