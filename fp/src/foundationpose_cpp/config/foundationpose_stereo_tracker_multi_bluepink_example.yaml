@@ -1,14 +1,14 @@
 grounded_sam_multi_first_mask_node:
   ros__parameters:
     object_names:
+      - golden object
       - blue carton
-      - pink carton
     dino_engines:
+      - /home/bit/ffs+fp+sam/sam/engines/grounding_dino_fixed_golden_object.engine
       - /home/bit/ffs+fp+sam/sam/engines/grounding_dino_fixed_blue_carton.engine
-      - /home/bit/ffs+fp+sam/sam/engines/grounding_dino_fixed_pink_carton.engine
     mask_output_names:
+      - golden_object.png
       - blue_carton.png
-      - pink_carton.png
     sam_encoder_engine: /home/bit/ffs+fp+sam/sam/engines/sam_image_encoder.engine
     sam_decoder_engine: /home/bit/ffs+fp+sam/sam/engines/sam_mask_decoder.engine
     image_topic: /left/image_raw
@@ -36,20 +36,20 @@ foundationpose_stereo_tracker_multi_node:
     model_input_height: 320
     min_depth_meters: 0.1
     max_depth_meters: 100.0
-    caminfo_path: /home/bit/ffs+fp+sam/ffs/640.txt
+    caminfo_path: /home/bit/ffs+fp+sam/ffs/64091.txt
 
     refiner_engine_path: /home/bit/ffs+fp+sam/fp/models/refiner_hwc_dynamic_fp16_thor.engine
     scorer_engine_path: /home/bit/ffs+fp+sam/fp/models/scorer_hwc_dynamic_fp16_thor.engine
     tracked_object_names:
+      - golden object
       - blue carton
-      - pink carton
     tracked_mesh_paths:
-      - /home/bit/dataset/jrnew-blue/mesh/textured_mesh.obj
-      - /home/bit/dataset/lgj_mesh/textured_mesh.obj
+      - /home/bit/dataset/weixing_mesh/textured_mesh.obj
+      - /home/bit/dataset/jrnew-blue/mesh1/textured_mesh.obj
     mask_image_directory: /home/bit/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask_multi
     tracked_mask_image_names:
+      - golden_object.png
       - blue_carton.png
-      - pink_carton.png
     resize_mask_to_input: false
     mask_poll_interval_ms: 200
 
@@ -63,10 +63,10 @@ foundationpose_stereo_tracker_multi_node:
     pose_smoothing_translation_alpha: 0.45
     pose_smoothing_rotation_alpha: 0.45
 
-    fx: 327.1586
-    fy: 326.8882
-    cx: 334.2443
-    cy: 246.0753
+    fx: 326.950601615584
+    fy: 327.041140739760
+    cx: 336.128121348489
+    cy: 244.754661442305
     max_input_image_height: 480
     max_input_image_width: 640
     register_refine_iterations: 5

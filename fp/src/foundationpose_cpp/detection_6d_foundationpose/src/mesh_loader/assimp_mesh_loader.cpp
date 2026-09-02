@@ -174,6 +174,43 @@ static bool LoadVector3f(const fs::path &path, Eigen::Vector3f &out_vector)
   return true;
 }
 
+static bool LoadFloat(const fs::path &path, float &out_value)
+{
+  std::ifstream file(path);
+  if (!file.is_open())
+  {
+    return false;
+  }
+
+  if (!(file >> out_value))
+  {
+    throw std::runtime_error("[AssimpMeshLoader] Failed to parse float file: " + path.string());
+  }
+
+  if (!std::isfinite(out_value) || out_value <= 0.0F)
+  {
+    throw std::runtime_error("[AssimpMeshLoader] Invalid scalar value: " + path.string());
+  }
+  return true;
+}
+
+static bool LoadTrimeshDiameter(const fs::path &mesh_dir, float &out_diameter)
+{
+  const fs::path diameter_path = mesh_dir / "diameter.txt";
+  if (!fs::exists(diameter_path))
+  {
+    return false;
+  }
+
+  if (!LoadFloat(diameter_path, out_diameter))
+  {
+    return false;
+  }
+
+  LOG(INFO) << "[AssimpMeshLoader] Loaded mesh diameter from " << diameter_path;
+  return true;
+}
+
 static bool LoadTrimeshOrientedBounds(const fs::path &mesh_dir,
                                       Eigen::Matrix4f &out_orient_bbox,
                                       Eigen::Vector3f &out_dimension)
@@ -270,8 +307,13 @@ AssimpMeshLoader::AssimpMeshLoader(const std::string &name, const std::string &m
   }
 
   const aiMesh *mesh = scene->mMeshes[0];
-  mesh_diamter_      = CalcMeshDiameter(mesh);
-  if (!LoadTrimeshOrientedBounds(fs::path(mesh_file_path).parent_path(), obb_, dim_))
+  const fs::path mesh_dir = fs::path(mesh_file_path).parent_path();
+  if (!LoadTrimeshDiameter(mesh_dir, mesh_diamter_))
+  {
+    mesh_diamter_ = CalcMeshDiameter(mesh);
+    LOG(INFO) << "[AssimpMeshLoader] Computed mesh diameter from vertices.";
+  }
+  if (!LoadTrimeshOrientedBounds(mesh_dir, obb_, dim_))
   {
     ComputeOBB(mesh, obb_, dim_);
     LOG(INFO) << "[AssimpMeshLoader] Using PCA fallback oriented bounds.";
