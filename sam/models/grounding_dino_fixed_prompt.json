@@ -7,6 +7,5 @@
     1066
   ],
   "mask_input_type": "float",
-  "fixed_mask": true,
-  "static_batch": true
+  "fixed_mask": true
 }

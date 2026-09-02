@@ -7,6 +7,7 @@ namespace grounded_sam {
 
 struct PipelineOptions {
   std::string dino_engine;
+  std::string dino_onnx;
   std::string sam_encoder_engine;
   std::string sam_decoder_engine;
   float box_threshold{0.3f};
@@ -25,4 +26,3 @@ class GroundedSamPipeline {
 };
 
 }  // namespace grounded_sam
-

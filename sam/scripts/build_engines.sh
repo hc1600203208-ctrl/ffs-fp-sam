@@ -3,28 +3,44 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TRTEXEC="${TRTEXEC:-trtexec}"
+TENSORRT_ROOT="${TENSORRT_ROOT:-}"
 DINO_HEIGHT="${DINO_HEIGHT:-800}"
 DINO_WIDTH="${DINO_WIDTH:-1066}"
+BUILD_DINO_TRT_ENGINE="${BUILD_DINO_TRT_ENGINE:-1}"
 
 if ! command -v "${TRTEXEC}" >/dev/null 2>&1; then
-  if [[ -x /usr/src/tensorrt/targets/x86_64-linux-gnu/bin/trtexec ]]; then
-    TRTEXEC=/usr/src/tensorrt/targets/x86_64-linux-gnu/bin/trtexec
-  else
-    echo "trtexec not found. Set TRTEXEC=/path/to/trtexec" >&2
-    exit 1
-  fi
+  for candidate in \
+    "${TENSORRT_ROOT}/bin/trtexec" \
+    "${TENSORRT_ROOT}/targets/aarch64-linux-gnu/bin/trtexec" \
+    "${TENSORRT_ROOT}/targets/x86_64-linux-gnu/bin/trtexec" \
+    /usr/src/tensorrt/bin/trtexec \
+    /usr/src/tensorrt/targets/aarch64-linux-gnu/bin/trtexec \
+    /usr/src/tensorrt/targets/x86_64-linux-gnu/bin/trtexec \
+    /usr/bin/trtexec; do
+    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+      TRTEXEC="${candidate}"
+      break
+    fi
+  done
+fi
+
+if ! command -v "${TRTEXEC}" >/dev/null 2>&1; then
+  echo "trtexec not found. Set TRTEXEC=/path/to/trtexec or TENSORRT_ROOT=/path/to/tensorrt" >&2
+  exit 1
 fi
 
 mkdir -p "${ROOT}/engines"
 
-"${TRTEXEC}" \
-  --onnx="${ROOT}/models/grounding_dino_fixed_prompt.onnx" \
-  --saveEngine="${ROOT}/engines/grounding_dino_fixed_prompt.engine" \
-  --minShapes=images:1x3:${DINO_HEIGHT}x${DINO_WIDTH} \
-  --optShapes=images:1x3:${DINO_HEIGHT}x${DINO_WIDTH} \
-  --maxShapes=images:1x3:${DINO_HEIGHT}x${DINO_WIDTH} \
-  --noTF32 \
-  --stronglyTyped
+if [[ "${BUILD_DINO_TRT_ENGINE}" == "1" ]]; then
+  "${TRTEXEC}" \
+    --onnx="${ROOT}/models/grounding_dino_fixed_prompt.onnx" \
+    --saveEngine="${ROOT}/engines/grounding_dino_fixed_prompt.engine" \
+    --noTF32 \
+    --stronglyTyped
+else
+  echo "Skipping DINO TensorRT engine build."
+  echo "Set BUILD_DINO_TRT_ENGINE=1 to build the DINO engine for validation on another target."
+fi
 
 "${TRTEXEC}" \
   --onnx="${ROOT}/models/sam_image_encoder.onnx" \

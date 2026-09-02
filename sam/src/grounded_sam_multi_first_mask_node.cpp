@@ -131,6 +131,7 @@ public:
         "output_dir", "/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask");
     declare_parameter<std::vector<std::string>>("object_names", std::vector<std::string>{});
     declare_parameter<std::vector<std::string>>("dino_engines", std::vector<std::string>{});
+    declare_parameter<std::vector<std::string>>("dino_onnxs", std::vector<std::string>{});
     declare_parameter<std::vector<std::string>>("mask_output_names", std::vector<std::string>{});
     declare_parameter<std::string>(
         "sam_encoder_engine", "/home/hc/weizi/ffs+fp+sam/sam/engines/sam_image_encoder.engine");
@@ -152,16 +153,32 @@ public:
 
     const auto object_names = get_parameter("object_names").as_string_array();
     const auto dino_engines = get_parameter("dino_engines").as_string_array();
+    const auto dino_onnxs = get_parameter("dino_onnxs").as_string_array();
     const auto mask_output_names = get_parameter("mask_output_names").as_string_array();
+    const bool use_dino_onnxs = !dino_onnxs.empty();
     if (object_names.empty())
     {
       throw std::invalid_argument("object_names must contain at least one object");
     }
-    if (object_names.size() != dino_engines.size() ||
-        object_names.size() != mask_output_names.size())
+    if (object_names.size() != mask_output_names.size())
     {
       throw std::invalid_argument(
-          "object_names, dino_engines, and mask_output_names must have the same length");
+          "object_names and mask_output_names must have the same length");
+    }
+    if (use_dino_onnxs)
+    {
+      if (object_names.size() != dino_onnxs.size())
+      {
+        throw std::invalid_argument("dino_onnxs must be empty or have the same length as object_names");
+      }
+      if (!dino_engines.empty() && object_names.size() != dino_engines.size())
+      {
+        throw std::invalid_argument("dino_engines must be empty or have the same length as object_names");
+      }
+    }
+    else if (object_names.size() != dino_engines.size())
+    {
+      throw std::invalid_argument("dino_engines must have the same length as object_names");
     }
 
     const bool publish_mask_topics = get_parameter("publish_mask_topics").as_bool();
@@ -175,13 +192,22 @@ public:
     object_pipelines_.reserve(object_names.size());
     for (std::size_t index = 0; index < object_names.size(); ++index)
     {
-      if (object_names[index].empty() || dino_engines[index].empty())
+      const bool missing_dino_model =
+          use_dino_onnxs ? dino_onnxs[index].empty() : dino_engines[index].empty();
+      if (object_names[index].empty() || missing_dino_model)
       {
-        throw std::invalid_argument("object_names and dino_engines must not contain empty values");
+        throw std::invalid_argument("object_names and DINO model paths must not contain empty values");
       }
 
       grounded_sam::PipelineOptions options;
-      options.dino_engine = dino_engines[index];
+      if (!dino_engines.empty())
+      {
+        options.dino_engine = dino_engines[index];
+      }
+      if (use_dino_onnxs)
+      {
+        options.dino_onnx = dino_onnxs[index];
+      }
       options.sam_encoder_engine = sam_encoder_engine;
       options.sam_decoder_engine = sam_decoder_engine;
       options.box_threshold = box_threshold;

@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROS_DISTRO="${ROS_DISTRO:-jazzy}"
-TENSORRT_ROOT="${TENSORRT_ROOT:-/usr/src/tensorrt}"
+TENSORRT_ROOT="${TENSORRT_ROOT:-}"
+BUILD_DINO_ONNXRUNTIME="${BUILD_DINO_ONNXRUNTIME:-OFF}"
 
 if [[ -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]]; then
   set +u
@@ -25,6 +26,7 @@ colcon build \
   --cmake-args \
     -DCMAKE_BUILD_TYPE=Release \
     -DTENSORRT_ROOT="${TENSORRT_ROOT}" \
+    -DBUILD_DINO_ONNXRUNTIME="${BUILD_DINO_ONNXRUNTIME}" \
     -DBUILD_GROUNDED_SAM_DEMO=OFF
 
 echo "Built ROS 2 package grounded_sam_trt."

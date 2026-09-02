@@ -1,6 +1,6 @@
-# Grounded DINO + SAM TensorRT Deployment
+# Grounded DINO + SAM Deployment
 
-This directory contains a standalone C++/TensorRT deployment for the
+This directory contains a standalone C++ deployment for the
 `Grounded-Segment-Anything` pipeline, without modifying the original Python
 project.
 
@@ -36,10 +36,16 @@ this platform.
 
 1. Put the original checkpoints into `models/` or point the export scripts to
    the checkpoint paths in `../Grounded-Segment-Anything/`.
-2. Export GroundingDINO and SAM ONNX models.
-3. Build TensorRT engines from the exported ONNX files.
+2. Export GroundingDINO and SAM ONNX models. Export GroundingDINO with static
+   batch size 1.
+3. Build TensorRT engines for GroundingDINO and SAM.
 4. Build the C++ demo.
 5. Run the binary on an RGB image folder or a single image.
+
+On the current NVIDIA Thor / TensorRT 10.16.2 platform, GroundingDINO should be
+exported as static batch size 1 and then rebuilt as a TensorRT engine without a
+dynamic optimization profile. Dynamic-batch DINO engines can produce incorrect
+logits on this target.
 
 For one `640x480` RGB image, run:
 
@@ -65,18 +71,19 @@ inference.
 - `sam_image_encoder.engine` and `sam_mask_decoder.engine` build successfully.
 - GroundingDINO exports with fixed prompt and fixed positional encoding without
   NaNs in the deformable transformer path.
-- `grounding_dino_fixed_prompt.engine` builds with strict FP32 TensorRT
-  execution and produces detections from the C++ runner.
-- The C++ demo runs the complete DINO plus SAM pipeline and writes a binary
-  mask PNG.
+- GroundingDINO TensorRT engine output is valid when exported with
+  `--static_batch` and built without DINO `--minShapes`, `--optShapes`, or
+  `--maxShapes`.
+- The C++ demo runs the complete DINO plus SAM pipeline and writes a binary mask
+  PNG.
 - The ROS 2 node subscribes to one first RGB frame, publishes `/fisrt_mask`
   when enabled, and writes the same `first_mask.png` file that the
   FoundationPose tracker polls. Its default input size is `640x480`, matching
   the stereo camera and FoundationPose calibration.
 
-The fixed positional encoding is deliberate: do not build this DINO engine
-with a dynamic `masks` input unless the TensorRT mask/position path has been
-validated on the target GPU. The export defaults can be changed with
+The fixed positional encoding and static batch export are deliberate: do not
+export DINO with a dynamic `masks` input or dynamic batch unless that path has
+been validated on the target runtime. The export defaults can be changed with
 `DINO_HEIGHT` and `DINO_WIDTH`, but they must match the C++ runner and engine
 profile.
 
@@ -100,9 +107,8 @@ longer starts the Python `ros2_first_mask_node.py` process:
 ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py
 ```
 
-The default TensorRT engine uses the fixed export prompt `blue carton`. A
-different prompt requires re-exporting GroundingDINO and rebuilding its
-engine. Useful launch overrides include:
+The default DINO model uses the fixed export prompt `blue carton`. A different
+prompt requires re-exporting GroundingDINO. Useful launch overrides include:
 
 ```bash
 ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py \
@@ -118,22 +124,49 @@ ROS 2 consumers when `publish_mask_topic` is true.
 
 cd /home/hc/weizi/ffs+fp+sam/sam
 
+Download the BERT text encoder once before exporting GroundingDINO on machines
+with unstable Hugging Face access:
+
+```bash
+./scripts/download_bert_base_uncased.sh
+```
+
+The export script prefers `models/bert-base-uncased`, then falls back to the
+standard Hugging Face cache at `~/.cache/huggingface/hub/models--bert-base-uncased`.
+It resolves cache roots to their `snapshots/<commit>` directory and enables
+`TRANSFORMERS_OFFLINE=1` and `HF_HUB_OFFLINE=1`, so it will use local BERT
+files instead of contacting `huggingface.co` during ONNX export. Override the
+path if you store the model elsewhere:
+
+```bash
+BERT_BASE_UNCASED_PATH=/path/to/bert-base-uncased ./scripts/export_dino.sh
+BERT_BASE_UNCASED_PATH=~/.cache/huggingface/hub/models--bert-base-uncased ./scripts/export_dino.sh
+```
+
+Manual export example:
+
+```bash
 /home/hc/anaconda3/envs/sam/bin/python scripts/export_onnx.py grounding_dino \
   --device cpu \
   --text_prompt "red cup" \
+  --bert_base_uncased_path models/bert-base-uncased \
   --dino_height 800 \
   --dino_width 1066 \
   --fixed_mask \
+  --static_batch \
   --output models/grounding_dino_red_cup.onnx
+```
 
-  /usr/src/tensorrt/targets/x86_64-linux-gnu/bin/trtexec \
+Build the DINO TensorRT engine from the static-batch ONNX without a dynamic
+shape profile:
+
+```bash
+trtexec \
   --onnx=/home/hc/weizi/ffs+fp+sam/sam/models/grounding_dino_red_cup.onnx \
   --saveEngine=/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_red_cup.engine \
-  --minShapes=images:1x3x800x1066 \
-  --optShapes=images:1x3x800x1066 \
-  --maxShapes=images:1x3x800x1066 \
   --noTF32 \
   --stronglyTyped
+```
 
   source /opt/ros/jazzy/setup.bash
 source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash

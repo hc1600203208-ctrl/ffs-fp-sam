@@ -2,6 +2,7 @@
 import argparse
 import json
 import sys
+import types
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from groundingdino.util.slconfig import SLConfig
 from groundingdino.util.utils import clean_state_dict
 from segment_anything import sam_model_registry
 from groundingdino.util.misc import NestedTensor, inverse_sigmoid
+from groundingdino.models.GroundingDINO.backbone.swin_transformer import window_partition
 
 
 @dataclass
@@ -32,11 +34,18 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
-def load_grounding_model(config_path: Path, checkpoint_path: Path, device: str):
+def load_grounding_model(
+    config_path: Path,
+    checkpoint_path: Path,
+    device: str,
+    bert_base_uncased_path: str = "",
+):
     args = SLConfig.fromfile(str(config_path))
     args.device = device
     args.use_checkpoint = False
     args.use_transformer_ckpt = False
+    if bert_base_uncased_path:
+        args.bert_base_uncased_path = bert_base_uncased_path
     model = build_model(args)
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
     model.load_state_dict(clean_state_dict(checkpoint["model"]), strict=False)
@@ -47,7 +56,6 @@ def load_grounding_model(config_path: Path, checkpoint_path: Path, device: str):
             module.use_transformer_ckpt = False
     model.eval().to(device)
     return model
-
 
 class FixedPositionEmbedding(torch.nn.Module):
     def __init__(self, position_embedding, feature_shapes, device):
@@ -67,6 +75,76 @@ class FixedPositionEmbedding(torch.nn.Module):
             if position.shape[-2] == height and position.shape[-1] == width:
                 return position.expand(tensor_list.tensors.shape[0], -1, -1, -1)
         raise RuntimeError(f"Unexpected feature shape: {height}x{width}")
+
+
+def _make_swin_attention_mask(height: int, width: int, window_size: int, shift_size: int):
+    if shift_size <= 0:
+        return None
+
+    padded_h = int(np.ceil(height / window_size)) * window_size
+    padded_w = int(np.ceil(width / window_size)) * window_size
+    image_mask = torch.zeros((1, padded_h, padded_w, 1), dtype=torch.float32)
+    h_slices = (
+        slice(0, -window_size),
+        slice(-window_size, -shift_size),
+        slice(-shift_size, None),
+    )
+    w_slices = (
+        slice(0, -window_size),
+        slice(-window_size, -shift_size),
+        slice(-shift_size, None),
+    )
+    count = 0
+    for h_slice in h_slices:
+        for w_slice in w_slices:
+            image_mask[:, h_slice, w_slice, :] = count
+            count += 1
+
+    mask_windows = window_partition(image_mask, window_size)
+    mask_windows = mask_windows.view(-1, window_size * window_size)
+    attention_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+    attention_mask = attention_mask.masked_fill(attention_mask != 0, float(-100.0)).masked_fill(
+        attention_mask == 0, float(0.0)
+    )
+    return attention_mask
+
+
+def _fixed_swin_basic_layer_forward(self, x, height, width):
+    attention_mask = self.fixed_attention_mask
+    if attention_mask is not None:
+        attention_mask = attention_mask.to(device=x.device, dtype=x.dtype)
+
+    for block in self.blocks:
+        block.H, block.W = height, width
+        x = block(x, attention_mask)
+
+    if self.downsample is not None:
+        x_down = self.downsample(x, height, width)
+        out_h, out_w = (height + 1) // 2, (width + 1) // 2
+        return x, height, width, x_down, out_h, out_w
+
+    return x, height, width, x, height, width
+
+
+def freeze_swin_attention_masks(model, image_height: int, image_width: int):
+    patch_h = (image_height + 3) // 4
+    patch_w = (image_width + 3) // 4
+    current_h = patch_h
+    current_w = patch_w
+
+    for layer in getattr(model.backbone[0], "layers", []):
+        attention_mask = _make_swin_attention_mask(
+            current_h, current_w, layer.window_size, layer.shift_size
+        )
+        if attention_mask is None:
+            layer.fixed_attention_mask = None
+        else:
+            layer.register_buffer("fixed_attention_mask", attention_mask, persistent=False)
+        layer.forward = types.MethodType(_fixed_swin_basic_layer_forward, layer)
+
+        if layer.downsample is not None:
+            current_h = (current_h + 1) // 2
+            current_w = (current_w + 1) // 2
 
 
 class GroundingDINOExportWrapper(torch.nn.Module):
@@ -184,8 +262,14 @@ class GroundingDINOExportWrapper(torch.nn.Module):
 
 
 def export_grounding_dino(args):
-    model = load_grounding_model(args.config_path, args.grounded_checkpoint, args.device)
+    model = load_grounding_model(
+        args.config_path,
+        args.grounded_checkpoint,
+        args.device,
+        args.bert_base_uncased_path,
+    )
     if args.fixed_mask:
+        freeze_swin_attention_masks(model, args.dino_height, args.dino_width)
         dummy_mask_for_shapes = torch.zeros(
             1, args.dino_height, args.dino_width, device=args.device, dtype=torch.bool
         )
@@ -227,7 +311,7 @@ def export_grounding_dino(args):
     if args.fixed_mask:
         export_inputs = (dummy_image,)
         input_names = ["images"]
-        dynamic_axes = {
+        dynamic_axes = None if args.static_batch else {
             "images": {0: "batch"},
             "pred_logits": {0: "batch"},
             "pred_boxes": {0: "batch"},
@@ -235,7 +319,7 @@ def export_grounding_dino(args):
     else:
         export_inputs = (dummy_image, dummy_mask)
         input_names = ["images", "masks"]
-        dynamic_axes = {
+        dynamic_axes = None if args.static_batch else {
             "images": {0: "batch"},
             "masks": {0: "batch"},
             "pred_logits": {0: "batch"},
@@ -259,6 +343,7 @@ def export_grounding_dino(args):
         "dino_input": [args.dino_height, args.dino_width],
         "mask_input_type": args.mask_input_type,
         "fixed_mask": args.fixed_mask,
+        "static_batch": args.static_batch,
     }
     output_path.with_suffix(".json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False))
 
@@ -355,11 +440,7 @@ class SamMaskDecoderWrapper(torch.nn.Module):
             sparse_prompt_embeddings=sparse_embedding,
             dense_prompt_embeddings=dense_embedding,
         )
-        best_idx = torch.argmax(scores, dim=1)
-        batch_idx = torch.arange(scores.shape[0], device=scores.device)
-        masks = masks[batch_idx, best_idx, :, :].unsqueeze(1)
-        scores = scores[batch_idx, best_idx].unsqueeze(1)
-        return masks, scores
+        return masks[:, 0:1, :, :], scores[:, 0:1]
 
 
 class SamImageEncoderWrapper(torch.nn.Module):
@@ -368,7 +449,7 @@ class SamImageEncoderWrapper(torch.nn.Module):
         self.sam = sam
 
     def forward(self, x):
-        return self.sam.image_encoder(self.sam.preprocess(x))
+        return self.sam.image_encoder(x)
 
 
 def export_sam_image_encoder(args):
@@ -398,6 +479,7 @@ def parse_args():
     parser.add_argument("--output", required=True)
     parser.add_argument("--config_path", default=str(REPO / "GroundingDINO" / "groundingdino" / "config" / "GroundingDINO_SwinT_OGC.py"))
     parser.add_argument("--grounded_checkpoint", default=str(REPO / "groundingdino_swint_ogc.pth"))
+    parser.add_argument("--bert_base_uncased_path", default="")
     parser.add_argument("--text_prompt", default="blue carton")
     parser.add_argument("--sam_version", default="vit_b")
     parser.add_argument("--sam_checkpoint", default=str(REPO / "sam_vit_b_01ec64.pth"))
@@ -405,6 +487,7 @@ def parse_args():
     parser.add_argument("--dino_width", type=int, default=1066)
     parser.add_argument("--mask_input_type", choices=["float", "bool"], default="float")
     parser.add_argument("--fixed_mask", action="store_true")
+    parser.add_argument("--static_batch", action="store_true")
     parser.add_argument("--sam_input", type=int, default=1024)
     return parser.parse_args()
 

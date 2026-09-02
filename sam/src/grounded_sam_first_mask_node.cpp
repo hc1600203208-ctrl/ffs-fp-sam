@@ -102,6 +102,7 @@ public:
     declare_parameter<std::string>(
         "dino_engine",
         "/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_prompt.engine");
+    declare_parameter<std::string>("dino_onnx", "");
     declare_parameter<std::string>(
         "sam_encoder_engine",
         "/home/hc/weizi/ffs+fp+sam/sam/engines/sam_image_encoder.engine");
@@ -127,6 +128,7 @@ public:
 
     grounded_sam::PipelineOptions options;
     options.dino_engine = get_parameter("dino_engine").as_string();
+    options.dino_onnx = get_parameter("dino_onnx").as_string();
     options.sam_encoder_engine = get_parameter("sam_encoder_engine").as_string();
     options.sam_decoder_engine = get_parameter("sam_decoder_engine").as_string();
     options.box_threshold = static_cast<float>(get_parameter("box_threshold").as_double());

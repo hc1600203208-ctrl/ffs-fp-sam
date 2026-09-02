@@ -12,6 +12,7 @@ struct CliArgs {
   std::string input;
   std::string output_dir{"outputs"};
   std::string dino_engine{"engines/grounding_dino_fixed_prompt.engine"};
+  std::string dino_onnx;
   std::string sam_encoder_engine{"engines/sam_image_encoder.engine"};
   std::string sam_decoder_engine{"engines/sam_mask_decoder.engine"};
   float box_threshold{0.3f};
@@ -23,6 +24,7 @@ void printUsage(const char* argv0) {
       << "Usage: " << argv0 << " --input <image_or_folder> --output_dir <dir> [options]\n"
       << "\nOptions:\n"
       << "  --dino_engine <path>\n"
+      << "  --dino_onnx <path>       use ONNX Runtime for DINO instead of TensorRT\n"
       << "  --sam_encoder_engine <path>\n"
       << "  --sam_decoder_engine <path>\n"
       << "  --box_threshold <float>   default 0.3\n"
@@ -44,6 +46,8 @@ CliArgs parseArgs(int argc, char** argv) {
       args.output_dir = require_value(key);
     } else if (key == "--dino_engine") {
       args.dino_engine = require_value(key);
+    } else if (key == "--dino_onnx") {
+      args.dino_onnx = require_value(key);
     } else if (key == "--sam_encoder_engine") {
       args.sam_encoder_engine = require_value(key);
     } else if (key == "--sam_decoder_engine") {
@@ -80,6 +84,7 @@ int main(int argc, char** argv) {
 
     grounded_sam::PipelineOptions options;
     options.dino_engine = cli.dino_engine;
+    options.dino_onnx = cli.dino_onnx;
     options.sam_encoder_engine = cli.sam_encoder_engine;
     options.sam_decoder_engine = cli.sam_decoder_engine;
     options.box_threshold = cli.box_threshold;
@@ -107,4 +112,3 @@ int main(int argc, char** argv) {
     return 1;
   }
 }
-

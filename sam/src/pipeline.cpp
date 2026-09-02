@@ -4,7 +4,7 @@ namespace grounded_sam {
 
 GroundedSamPipeline::GroundedSamPipeline(const PipelineOptions& options)
     : options_(options),
-      dino_(options.dino_engine),
+      dino_(options.dino_engine, options.dino_onnx),
       sam_(options.sam_encoder_engine, options.sam_decoder_engine) {}
 
 cv::Mat GroundedSamPipeline::run(const cv::Mat& rgb) {
@@ -13,4 +13,3 @@ cv::Mat GroundedSamPipeline::run(const cv::Mat& rgb) {
 }
 
 }  // namespace grounded_sam
-

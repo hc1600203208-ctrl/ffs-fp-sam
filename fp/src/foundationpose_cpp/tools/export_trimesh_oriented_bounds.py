@@ -22,9 +22,25 @@ def load_mesh(mesh_file: Path) -> trimesh.Trimesh:
     return mesh
 
 
+def compute_mesh_diameter(mesh: trimesh.Trimesh) -> float:
+    """Compute a fast diameter estimate using the minimum enclosing sphere."""
+    try:
+        _, radius = trimesh.nsphere.minimum_nsphere(mesh)
+        diameter = float(radius) * 2.0
+        if np.isfinite(diameter) and diameter > 0.0:
+            return diameter
+    except Exception:
+        pass
+
+    # Conservative fallback if the nsphere solver fails for a degenerate mesh.
+    return float(np.linalg.norm(mesh.bounding_box_oriented.extents))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Export to_origin.txt and extents.txt exactly as used by official FoundationPose."
+        description=(
+            "Export to_origin.txt, extents.txt, and diameter.txt for C++ FoundationPose."
+        )
     )
     parser.add_argument("mesh_file", type=Path, help="Path to the mesh file loaded by FoundationPose.")
     parser.add_argument(
@@ -46,20 +62,34 @@ def main() -> None:
 
     to_origin_path = output_dir / "to_origin.txt"
     extents_path = output_dir / "extents.txt"
+    diameter_path = output_dir / "diameter.txt"
     if not args.overwrite:
-        existing = [path for path in (to_origin_path, extents_path) if path.exists()]
-        if existing:
-            names = ", ".join(str(path) for path in existing)
-            raise FileExistsError(f"Refusing to overwrite existing sidecar file(s): {names}")
+        existing = [path for path in (to_origin_path, extents_path, diameter_path) if path.exists()]
+        if len(existing) == 3:
+            print(f"Sidecar files already exist under {output_dir}, nothing to do.")
+            return
 
     mesh = load_mesh(mesh_file)
     to_origin, extents = trimesh.bounds.oriented_bounds(mesh)
+    diameter = compute_mesh_diameter(mesh)
 
-    np.savetxt(to_origin_path, to_origin.reshape(4, 4), fmt="%.18e")
-    np.savetxt(extents_path, np.asarray(extents).reshape(1, 3), fmt="%.18e")
+    if args.overwrite or not to_origin_path.exists():
+        np.savetxt(to_origin_path, to_origin.reshape(4, 4), fmt="%.18e")
+        print(f"Wrote {to_origin_path}")
+    else:
+        print(f"Kept existing {to_origin_path}")
 
-    print(f"Wrote {to_origin_path}")
-    print(f"Wrote {extents_path}")
+    if args.overwrite or not extents_path.exists():
+        np.savetxt(extents_path, np.asarray(extents).reshape(1, 3), fmt="%.18e")
+        print(f"Wrote {extents_path}")
+    else:
+        print(f"Kept existing {extents_path}")
+
+    if args.overwrite or not diameter_path.exists():
+        np.savetxt(diameter_path, np.asarray([[diameter]]), fmt="%.18e")
+        print(f"Wrote {diameter_path}")
+    else:
+        print(f"Kept existing {diameter_path}")
 
 
 if __name__ == "__main__":
