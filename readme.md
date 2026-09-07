@@ -1,11 +1,35 @@
+# 整体启动脚本
+source /home/hc/weizi/ffs+fp+sam/sam/ros2_install/setup.bash
+ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
+ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py
+
 # ffs使用说明
 ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
-dataset_root:=/home/hc/dataset/myobject/weixing \
-caminfo_path:=/home/hc/dataset/myobject/penqi/jr714.txt
+dataset_root:=/home/hc/dataset/myobject/weixing1 \
+caminfo_path:=/home/hc/weizi/ffs+fp+sam/ffs/128091.txt
 # 进行深度图和rgb图对应可视化
-python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/depth_inspector.py --rgb-dir /home/hc/dataset/myobject/weixing/rgb --depth-dir /home/hc/dataset/myobject/weixing/depth
+python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/depth_inspector.py --rgb-dir /home/hc/dataset/myobject/weixing1/rgb --depth-dir /home/hc/dataset/myobject/weixing1/depth
 # 进行极限校正可视化结果
 python /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_stereo_rectification_vis.py --caminfo-path /home/hc/dataset/myobject/fluke/jr714.txt --left-dir /home/hc/dataset/myobject/fluke/rgb --right-dir /home/hc/dataset/myobject/fluke/camera2 --output-dir /home/hc/dataset/myobject/fluke/rect
+
+# 生成extents.txt
+
+python /home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/tools/export_trimesh_oriented_bounds.py /home/hc/dataset/myobject/weixing1/bundlesdf720/textured_mesh.obj
+
+# bundlesdf 简化命令
+source ~/anaconda3/bin/activate
+conda activate bundlesdf
+
+python /home/hc/weizi/BundleSDF/tools/simplify_mesh_surface.py \
+  --input /home/hc/dataset/myobject/weixing1/weixing_mesh \
+  --output_dir /home/hc/dataset/myobject/weixing1/weixing_mesh_surface \
+  --method normal \
+  --normal_ray_offset_ratio 2.0 \
+  --normal_dilate_hops 2 \
+  --min_component_faces 0 \
+  --min_component_area 0 \
+  --overwrite
+
 # 运行单次sam命令
 python /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/sam.py \
   --config GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py \
@@ -18,22 +42,16 @@ python /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/sam.py \
   --text_prompt "blue carton " \
   --device "cuda"
 
-# 生成extents.txt
+# sim仿真命令
+cd /home/hc/weizi/ffs+fp+sam/sim
+source /opt/ros/jazzy/setup.bash
+colcon build --packages-select sim_stereo_cpp
 
-python /home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/tools/export_trimesh_oriented_bounds.py /home/hc/dataset/myobject/weixing1/bundlesdf720/textured_mesh.obj
+source /opt/ros/jazzy/setup.bash
+source /home/hc/weizi/ffs+fp+sam/sim/install/setup.bash
+ros2 launch sim_stereo_cpp stereo_render_cpp.launch.py
 
-ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py \
-  run_first_mask:=true \
-  mask_topic:=/fisrt_mask
 
-  ros2 launch foundationpose_cpp foundationpose_stereo_tracker.launch.py \
-  run_first_mask:=true \
-  text_prompt:="blue carton" \
-  bert_base_uncased_path:=/home/hc/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594
-
-  ros2 launch foundationpose_cpp_inline_mask foundationpose_stereo_tracker_fast_inline_mask.launch.py \
-  first_mask_text_prompt:="blue carton" \
-  bert_base_uncased_path:=/home/hc/.cache/huggingface/hub/models--bert-base-uncased/snapshots/86b5e0934494bd15c9632b12f734a8a67f723594
 
 # 运行批量评估脚本命令
 python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/lgj   --tracking_dataset_root /home/hc/dataset/myobject/lgj --bundle_shorter_side 720
@@ -58,6 +76,11 @@ python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.p
 # 生成dino onnx文件
 cd ~/weizi/ffs+fp+sam/sam
 ./scripts/export_dino.sh
+#
+source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
+source /home/hc/weizi/ffs+fp+sam/sam/ros2_install/setup.bash
+ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py
+ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
 # 单次c++部署sam测试
 ./build/grounded_sam_demo \
   --input /home/hc/weizi/dataset/jrnew-blue/rgb/0000.png \

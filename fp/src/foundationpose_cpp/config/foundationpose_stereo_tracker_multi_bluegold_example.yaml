@@ -1,0 +1,73 @@
+grounded_sam_multi_first_mask_node:
+  ros__parameters:
+    object_names:
+      - blue carton
+      - golden object
+    dino_engines:
+      - /home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_blue_carton.engine
+      - /home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_golden_object.engine
+    mask_output_names:
+      - blue_carton.png
+      - golden_object.png
+    sam_encoder_engine: /home/hc/weizi/ffs+fp+sam/sam/engines/sam_image_encoder.engine
+    sam_decoder_engine: /home/hc/weizi/ffs+fp+sam/sam/engines/sam_mask_decoder.engine
+    image_topic: /left/image_raw
+    output_dir: /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask_multi
+    publish_mask_topics: true
+    mask_topic_prefix: /first_masks
+    input_width: 640
+    input_height: 480
+    box_threshold: 0.5
+    max_detections: 16
+
+foundationpose_stereo_tracker_multi_node:
+  ros__parameters:
+    left_image_topic: /left/image_raw
+    right_image_topic: /right/image_raw
+    image_reliability: 1
+    sync_queue_size: 10
+    max_sync_interval_sec: 0.07
+
+    stereo_model_type: FAST_FOUNDATION_STEREO
+    stereo_engine_file_path:
+      - /home/hc/model/ffs/23-36-37/feature_runner_fp16_5060.engine
+      - /home/hc/model/ffs/23-36-37/post_runner_fp16_5060.engine
+    model_input_width: 640
+    model_input_height: 448
+    min_depth_meters: 0.1
+    max_depth_meters: 100.0
+    caminfo_path: /home/hc/weizi/ffs+fp+sam/ffs/64091.txt
+
+    refiner_engine_path: /home/hc/weizi/ffs+fp+sam/fp/models/refiner_hwc_dynamic_fp16_5060.engine
+    scorer_engine_path: /home/hc/weizi/ffs+fp+sam/fp/models/scorer_hwc_dynamic_fp16_5060.engine
+    tracked_object_names:
+      - blue carton
+      - golden object
+    tracked_mesh_paths:
+      - /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
+      - /home/hc/dataset/myobject/weixing1/weixing_mesh_surface/textured_mesh.obj
+    mask_image_directory: /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask_multi
+    tracked_mask_image_names:
+      - blue_carton.png
+      - golden_object.png
+    resize_mask_to_input: false
+    mask_poll_interval_ms: 200
+
+    pose_topic: /foundationpose/pose
+    pose_frame_id: camera_color_optical_frame
+    visualization_topic: /foundationpose/multi_visualization
+    visualization_window_name: foundationpose_multi_visualization
+    publish_visualization: false
+    show_visualization_window: true
+    enable_pose_smoothing: true
+    pose_smoothing_translation_alpha: 0.45
+    pose_smoothing_rotation_alpha: 0.45
+
+    fx: 326.950601615584
+    fy: 327.041140739760
+    cx: 336.128121348489
+    cy: 244.754661442305
+    max_input_image_height: 480
+    max_input_image_width: 640
+    register_refine_iterations: 5
+    track_refine_iterations: 2

@@ -300,7 +300,7 @@ AssimpMeshLoader::AssimpMeshLoader(const std::string &name, const std::string &m
   Assimp::Importer importer;
   const aiScene   *scene =
       importer.ReadFile(mesh_file_path, aiProcess_Triangulate | aiProcess_JoinIdenticalVertices |
-                                            aiProcess_SortByPType);
+                                            aiProcess_SortByPType | aiProcess_GenSmoothNormals);
   if (scene == nullptr)
   {
     throw std::runtime_error("[AssimpMeshLoader] Failed to read mesh file: " + mesh_file_path);

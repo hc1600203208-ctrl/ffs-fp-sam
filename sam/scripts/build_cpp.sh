@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${ROOT}/build"
+if [[ -z "${TENSORRT_ROOT:-}" && -d /usr/src/tensorrt ]]; then
+  TENSORRT_ROOT="/usr/src/tensorrt"
+fi
 TENSORRT_ROOT="${TENSORRT_ROOT:-}"
 BUILD_DINO_ONNXRUNTIME="${BUILD_DINO_ONNXRUNTIME:-OFF}"
 

@@ -14,6 +14,19 @@ set(ONNXRUNTIME_ROOT
   CACHE PATH "ONNX Runtime root directory"
 )
 
+if(NOT TENSORRT_ROOT)
+  foreach(_tensorrt_root
+      /usr/src/tensorrt
+      /usr/local/tensorrt
+      /usr/local/TensorRT
+  )
+    if(EXISTS "${_tensorrt_root}/include/NvInfer.h")
+      set(TENSORRT_ROOT "${_tensorrt_root}" CACHE PATH "TensorRT root directory" FORCE)
+      break()
+    endif()
+  endforeach()
+endif()
+
 find_package(OpenCV REQUIRED)
 find_package(CUDAToolkit REQUIRED)
 find_package(ament_cmake QUIET)
@@ -38,6 +51,7 @@ endif()
 find_path(TENSORRT_INCLUDE_DIR NvInfer.h
   PATHS
     ${TENSORRT_SEARCH_PATHS}
+    /usr/src/tensorrt/include
     /usr/include/aarch64-linux-gnu
     /usr/include/x86_64-linux-gnu
 )
@@ -55,13 +69,8 @@ endif()
 find_library(TENSORRT_NVINFER nvinfer
   PATHS
     ${TENSORRT_LIBRARY_PATHS}
-    /usr/lib/aarch64-linux-gnu
-    /usr/lib/x86_64-linux-gnu
-)
-
-find_library(TENSORRT_NVPARSER nvparsers
-  PATHS
-    ${TENSORRT_LIBRARY_PATHS}
+    /usr/src/tensorrt/targets/x86_64-linux-gnu/lib
+    /usr/src/tensorrt/targets/aarch64-linux-gnu/lib
     /usr/lib/aarch64-linux-gnu
     /usr/lib/x86_64-linux-gnu
 )
@@ -69,6 +78,8 @@ find_library(TENSORRT_NVPARSER nvparsers
 find_library(TENSORRT_NVONNXPARSER nvonnxparser
   PATHS
     ${TENSORRT_LIBRARY_PATHS}
+    /usr/src/tensorrt/targets/x86_64-linux-gnu/lib
+    /usr/src/tensorrt/targets/aarch64-linux-gnu/lib
     /usr/lib/aarch64-linux-gnu
     /usr/lib/x86_64-linux-gnu
 )
@@ -76,6 +87,8 @@ find_library(TENSORRT_NVONNXPARSER nvonnxparser
 find_library(TENSORRT_NVINFER_PLUGIN nvinfer_plugin
   PATHS
     ${TENSORRT_LIBRARY_PATHS}
+    /usr/src/tensorrt/targets/x86_64-linux-gnu/lib
+    /usr/src/tensorrt/targets/aarch64-linux-gnu/lib
     /usr/lib/aarch64-linux-gnu
     /usr/lib/x86_64-linux-gnu
 )

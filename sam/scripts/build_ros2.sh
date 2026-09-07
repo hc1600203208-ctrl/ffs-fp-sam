@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROS_DISTRO="${ROS_DISTRO:-jazzy}"
+if [[ -z "${TENSORRT_ROOT:-}" && -d /usr/src/tensorrt ]]; then
+  TENSORRT_ROOT="/usr/src/tensorrt"
+fi
 TENSORRT_ROOT="${TENSORRT_ROOT:-}"
 BUILD_DINO_ONNXRUNTIME="${BUILD_DINO_ONNXRUNTIME:-OFF}"
 

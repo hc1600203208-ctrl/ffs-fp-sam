@@ -40,7 +40,7 @@ namespace
 {
 
 constexpr std::uint64_t kPoseBatchSize = 252;
-constexpr std::uint64_t kTrackingBatchSize = 1;
+constexpr std::uint64_t kTrackingBatchSize = 252;
 constexpr int kCropHeight = 160;
 constexpr int kCropWidth = 160;
 constexpr float kRadiansToDegrees = 57.29577951308232F;

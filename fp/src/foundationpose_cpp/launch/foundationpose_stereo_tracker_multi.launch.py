@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 import launch
 from launch.actions import DeclareLaunchArgument, OpaqueFunction
@@ -40,6 +41,18 @@ def generate_launch_description():
     input_width = LaunchConfiguration("input_width")
     input_height = LaunchConfiguration("input_height")
     box_threshold = LaunchConfiguration("box_threshold")
+
+    # The tracker links against both its package-local shared libraries and
+    # the package-level detection library.  Keep these directories ahead of
+    # any older overlay (for example foundationpose_cpp_inline_mask), which
+    # otherwise can make the multi tracker load an ABI-incompatible library.
+    tracker_library_path = os.pathsep.join(
+        [
+            "/home/hc/weizi/ffs+fp+sam/fp/install/foundationpose_cpp/lib/foundationpose_cpp",
+            "/home/hc/weizi/ffs+fp+sam/fp/install/foundationpose_cpp/lib",
+            os.environ.get("LD_LIBRARY_PATH", ""),
+        ]
+    )
 
     launch_args = [
         DeclareLaunchArgument(
@@ -95,6 +108,7 @@ def generate_launch_description():
         executable="foundationpose_stereo_tracker_multi_node",
         name="foundationpose_stereo_tracker_multi_node",
         output="screen",
+        additional_env={"LD_LIBRARY_PATH": tracker_library_path},
         parameters=[
             params_file,
             {"mask_image_directory": first_mask_output_dir},

@@ -68,7 +68,7 @@ def generate_launch_description():
         DeclareLaunchArgument("publish_mask_topic", default_value="true"),
         DeclareLaunchArgument(
             "dino_engine",
-            default_value="/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_prompt.engine",
+            default_value="/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_golden_object.engine",
         ),
         DeclareLaunchArgument(
             "sam_encoder_engine",
