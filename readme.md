@@ -1,9 +1,15 @@
 # 整体启动脚本
+source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
 source /home/hc/weizi/ffs+fp+sam/sam/ros2_install/setup.bash
 ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
 ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py
 
 # ffs使用说明
+
+ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
+dataset_root:=/home/hc/dataset/myobject/oxi_fast_all \
+caminfo_path:=/home/hc/weizi/ffs+fp+sam/ffs/jr714.txt
+
 ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
 dataset_root:=/home/hc/dataset/myobject/weixing1 \
 caminfo_path:=/home/hc/weizi/ffs+fp+sam/ffs/128091.txt
@@ -21,8 +27,8 @@ source ~/anaconda3/bin/activate
 conda activate bundlesdf
 
 python /home/hc/weizi/BundleSDF/tools/simplify_mesh_surface.py \
-  --input /home/hc/dataset/myobject/weixing1/weixing_mesh \
-  --output_dir /home/hc/dataset/myobject/weixing1/weixing_mesh_surface \
+  --input /home/hc/weizi/dataset/jrnew-blue/mesh \
+  --output_dir /home/hc/weizi/dataset/jrnew-blue/mesh_simple \
   --method normal \
   --normal_ray_offset_ratio 2.0 \
   --normal_dilate_hops 2 \
@@ -65,9 +71,9 @@ python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.p
 
 python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/oxi   --tracking_dataset_root /home/hc/dataset/myobject/oxi --bundle_shorter_side 720 --fp_fps 12  --fp_render_mode faces 
 
-python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/weizi/dataset/jrnew-blue  --tracking_dataset_root /home/hc/dataset/myobject/blue_fast --bundle_shorter_side 720 --fp_fps 12  --fp_render_mode faces  --allow_dirty_bundlesdf
+python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/oxi  --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction  --foundationpose_depth_source tracking_dataset   --overwrite --tracking_dataset_root /home/hc/dataset/myobject/oxi_fast  --fp_fps 20  --fp_render_mode faces  --allow_dirty_bundlesdf
 
- python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py   /home/hc/dataset/myobject/lgj   --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction   --tracking_dataset_root /home/hc/dataset/myobject/lgj_fast2 --foundationpose_depth_source tracking_dataset   --overwrite  --fp_fps 20  --fp_render_mode faces --fp_q_omega 3e-2 --best_method confidence_full_threshold_sweep/threshold_0_35
+ python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py   /home/hc/dataset/myobject/lgj   --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction   --tracking_dataset_root /home/hc/dataset/myobject/lgj_fast --foundationpose_depth_source tracking_dataset   --overwrite  --fp_fps 20  --fp_render_mode faces --fp_q_omega 3e-2 
 
  cd /home/hc/weizi/ffs+fp+sam/sam
  # 生成dino 和sam engine文件

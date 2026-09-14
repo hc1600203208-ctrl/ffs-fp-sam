@@ -41,6 +41,8 @@ def generate_launch_description():
     input_width = LaunchConfiguration("input_width")
     input_height = LaunchConfiguration("input_height")
     box_threshold = LaunchConfiguration("box_threshold")
+    enable_profiling = LaunchConfiguration("enable_profiling")
+    profiling_log_interval_frames = LaunchConfiguration("profiling_log_interval_frames")
 
     # The tracker links against both its package-local shared libraries and
     # the package-level detection library.  Keep these directories ahead of
@@ -75,6 +77,16 @@ def generate_launch_description():
         DeclareLaunchArgument("input_width", default_value="640"),
         DeclareLaunchArgument("input_height", default_value="480"),
         DeclareLaunchArgument("box_threshold", default_value="0.3"),
+        DeclareLaunchArgument(
+            "enable_profiling",
+            default_value="true",
+            description="Enable per-frame timing statistics for the multi-object tracker.",
+        ),
+        DeclareLaunchArgument(
+            "profiling_log_interval_frames",
+            default_value="30",
+            description="How often to print cumulative timing averages, in processed tracking frames.",
+        ),
     ]
 
     clean_first_mask_output_dir = OpaqueFunction(
@@ -112,6 +124,12 @@ def generate_launch_description():
         parameters=[
             params_file,
             {"mask_image_directory": first_mask_output_dir},
+            {
+                "enable_profiling": ParameterValue(enable_profiling, value_type=bool),
+                "profiling_log_interval_frames": ParameterValue(
+                    profiling_log_interval_frames, value_type=int
+                ),
+            },
         ],
     )
 

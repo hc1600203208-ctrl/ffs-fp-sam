@@ -35,6 +35,7 @@
 #include "estimator/fast_foundation_stereo_estimator.h"
 #include "stereo_calibration_utils.hpp"
 #include "trt_core/trt_core.h"
+#include "tracking_performance_profiler.hpp"
 
 namespace
 {
@@ -450,12 +451,17 @@ public:
     LoadParameters();
     BuildStereoEstimator();
     BuildObjectTrackers();
+    InitializeProfiler();
     SetupRosInterfaces();
   }
 
   ~FoundationPoseStereoTrackerMultiNode() override
   {
     StopTrackingWorkers();
+    if (profiler_ && profiler_->enabled())
+    {
+      RCLCPP_INFO(get_logger(), "%s", profiler_->FormatFinalSummary().c_str());
+    }
   }
 
 private:
@@ -469,6 +475,8 @@ private:
     std::size_t object_index{0};
     bool success{false};
     Eigen::Matrix4f pose{Eigen::Matrix4f::Identity()};
+    double refine_ms{0.0};
+    double schedule_wait_ms{0.0};
   };
 
   struct TrackingWorker
@@ -483,6 +491,8 @@ private:
     cv::Mat rgb;
     cv::Mat depth;
     Eigen::Matrix4f hypothesis{Eigen::Matrix4f::Identity()};
+    std::chrono::steady_clock::time_point job_submitted_at{};
+    std::chrono::steady_clock::time_point job_started_at{};
     PoseResult result;
   };
 
@@ -540,6 +550,8 @@ private:
     declare_parameter<int>("max_input_image_width", 640);
     declare_parameter<int>("register_refine_iterations", 5);
     declare_parameter<int>("track_refine_iterations", 2);
+    declare_parameter<bool>("enable_profiling", false);
+    declare_parameter<int>("profiling_log_interval_frames", 30);
   }
 
   void LoadParameters()
@@ -577,6 +589,9 @@ private:
     max_input_image_width_ = get_parameter("max_input_image_width").as_int();
     register_refine_iterations_ = static_cast<std::size_t>(get_parameter("register_refine_iterations").as_int());
     track_refine_iterations_ = static_cast<std::size_t>(get_parameter("track_refine_iterations").as_int());
+    enable_profiling_ = get_parameter("enable_profiling").as_bool();
+    profiling_log_interval_frames_ = static_cast<int>(
+        std::max<std::int64_t>(1, get_parameter("profiling_log_interval_frames").as_int()));
     intrinsic_ = BuildIntrinsicMatrix(get_parameter("fx").as_double(), get_parameter("fy").as_double(),
                                       get_parameter("cx").as_double(), get_parameter("cy").as_double());
 
@@ -680,6 +695,13 @@ private:
     }
   }
 
+  void InitializeProfiler()
+  {
+    profiler_ = std::make_unique<foundationpose_profiling::TrackingPerformanceProfiler>();
+    profiler_->Initialize(enable_profiling_, static_cast<std::size_t>(profiling_log_interval_frames_),
+                          sync_queue_size_, max_sync_interval_sec_, object_names_);
+  }
+
   void SetupRosInterfaces()
   {
     image_qos_profile_.reliability(static_cast<rclcpp::ReliabilityPolicy>(image_reliability_));
@@ -718,12 +740,14 @@ private:
     return true;
   }
 
-  bool BuildDepthFromStereo(const cv::Mat &left, const cv::Mat &right, cv::Mat *depth)
+  bool BuildDepthFromStereo(const cv::Mat &left, const cv::Mat &right, cv::Mat *depth,
+                            foundationpose_profiling::DepthTimingBreakdown *timings = nullptr)
   {
     if (depth == nullptr || left.size() != right.size() || !EnsureRectificationMaps(left.size()))
     {
       return false;
     }
+    const auto depth_start = std::chrono::steady_clock::now();
     cv::Mat left_rectified;
     cv::Mat right_rectified;
     cv::remap(left, left_rectified, rectification_maps_.left_map_x, rectification_maps_.left_map_y,
@@ -736,10 +760,26 @@ private:
     {
       return false;
     }
+    if (timings != nullptr)
+    {
+      timings->remap_prepare_ms =
+          foundationpose_profiling::MillisecondsBetween(depth_start, std::chrono::steady_clock::now());
+    }
     cv::Mat disparity;
+    const auto inference_start = std::chrono::steady_clock::now();
     if (!stereo_estimator_->inference(prepared_left.image, prepared_right.image, disparity))
     {
+      if (timings != nullptr)
+      {
+        timings->ffs_depth_estimation_ms =
+            foundationpose_profiling::MillisecondsBetween(inference_start, std::chrono::steady_clock::now());
+      }
       return false;
+    }
+    if (timings != nullptr)
+    {
+      timings->ffs_depth_estimation_ms =
+          foundationpose_profiling::MillisecondsBetween(inference_start, std::chrono::steady_clock::now());
     }
     const double baseline = ComputeRectifiedBaselineMeters(rectification_maps_);
     const CameraIntrinsics intrinsics = ComputePreparedIntrinsics(rectification_maps_, prepared_left);
@@ -747,11 +787,23 @@ private:
     {
       return false;
     }
+    const auto depth_filter_start = std::chrono::steady_clock::now();
     const cv::Mat depth_model = DisparityToDepthMeters(
         disparity, static_cast<float>(intrinsics.fx), static_cast<float>(baseline),
         static_cast<float>(min_depth_meters_), static_cast<float>(max_depth_meters_));
+    if (timings != nullptr)
+    {
+      timings->depth_confidence_filter_ms =
+          foundationpose_profiling::MillisecondsBetween(depth_filter_start, std::chrono::steady_clock::now());
+    }
+    const auto restore_start = std::chrono::steady_clock::now();
     const cv::Mat depth_rectified = RestoreToRectifiedResolution(depth_model, prepared_left, left_rectified.size());
     *depth = AlignRectifiedDepthToOriginalLeft(depth_rectified, rectification_maps_, cv::INTER_NEAREST);
+    if (timings != nullptr)
+    {
+      timings->depth_restore_align_ms =
+          foundationpose_profiling::MillisecondsBetween(restore_start, std::chrono::steady_clock::now());
+    }
     return !depth->empty();
   }
 
@@ -809,10 +861,14 @@ private:
       const cv::Mat depth = worker.depth;
       const Eigen::Matrix4f hypothesis = worker.hypothesis;
       worker.has_job = false;
+      worker.job_started_at = std::chrono::steady_clock::now();
       lock.unlock();
 
       PoseResult result;
       result.object_index = index;
+      result.schedule_wait_ms = foundationpose_profiling::MillisecondsBetween(
+          worker.job_submitted_at, worker.job_started_at);
+      const auto refine_start = std::chrono::steady_clock::now();
       try
       {
         result.success = object.foundation_pose->Track(
@@ -822,6 +878,8 @@ private:
       {
         result.success = false;
       }
+      result.refine_ms =
+          foundationpose_profiling::MillisecondsBetween(refine_start, std::chrono::steady_clock::now());
 
       lock.lock();
       worker.result = std::move(result);
@@ -833,16 +891,30 @@ private:
   void StereoCallback(const ImageMsg::ConstSharedPtr &left_message, const ImageMsg::ConstSharedPtr &right_message)
   {
     std::unique_lock<std::mutex> lock(process_mutex_, std::try_to_lock);
-    if (!lock.owns_lock() ||
-        !CheckTimestamp(left_message->header.stamp, right_message->header.stamp, max_sync_interval_sec_))
+    if (!lock.owns_lock())
     {
+      if (profiler_)
+      {
+        profiler_->RecordDroppedBusy();
+      }
       return;
     }
+    if (!CheckTimestamp(left_message->header.stamp, right_message->header.stamp, max_sync_interval_sec_))
+    {
+      if (profiler_)
+      {
+        profiler_->RecordDroppedTimestamp();
+      }
+      return;
+    }
+    const auto frame_start = std::chrono::steady_clock::now();
     try
     {
       const cv::Mat rgb = ConvertPoseRgbImage(left_message);
       cv::Mat depth;
-      if (!BuildDepthFromStereo(ConvertStereoInputImage(left_message), ConvertStereoInputImage(right_message), &depth) ||
+      foundationpose_profiling::DepthTimingBreakdown depth_timings;
+      if (!BuildDepthFromStereo(ConvertStereoInputImage(left_message), ConvertStereoInputImage(right_message), &depth,
+                                &depth_timings) ||
           rgb.size() != depth.size())
       {
         return;
@@ -850,9 +922,21 @@ private:
       if (!AllObjectsRegistered())
       {
         TryInitialRegistration(left_message->header, rgb, depth);
+        if (profiler_)
+        {
+          profiler_->RecordRegistrationFrame();
+        }
         return;
       }
-      RunTracking(left_message->header, rgb, depth);
+      const auto timing = RunTracking(left_message->header, rgb, depth, depth_timings, frame_start);
+      if (profiler_)
+      {
+        profiler_->RecordTrackingFrame(timing);
+        if (profiler_->ShouldLog())
+        {
+          RCLCPP_INFO(get_logger(), "%s", profiler_->FormatPeriodicReport().c_str());
+        }
+      }
     }
     catch (const std::exception &error)
     {
@@ -943,8 +1027,16 @@ private:
     }
   }
 
-  void RunTracking(const std_msgs::msg::Header &header, const cv::Mat &rgb, const cv::Mat &depth)
+  foundationpose_profiling::TrackingFrameTiming RunTracking(
+      const std_msgs::msg::Header &header, const cv::Mat &rgb, const cv::Mat &depth,
+      const foundationpose_profiling::DepthTimingBreakdown &depth_timings,
+      const std::chrono::steady_clock::time_point &frame_start)
   {
+    foundationpose_profiling::TrackingFrameTiming timing;
+    timing.per_object_refine_ms.assign(tracked_objects_.size(), 0.0);
+    timing.per_object_schedule_wait_ms.assign(tracked_objects_.size(), 0.0);
+    const auto run_start = std::chrono::steady_clock::now();
+
     for (std::size_t index = 0; index < tracked_objects_.size(); ++index)
     {
       auto &worker = *tracked_objects_[index].tracking_worker;
@@ -955,27 +1047,48 @@ private:
         worker.hypothesis = tracked_objects_[index].last_pose;
         worker.finished = false;
         worker.has_job = true;
+        worker.job_submitted_at = std::chrono::steady_clock::now();
       }
       worker.job_ready.notify_one();
     }
+    const auto dispatch_end = std::chrono::steady_clock::now();
+    timing.multi_object_dispatch_ms =
+        foundationpose_profiling::MillisecondsBetween(run_start, dispatch_end);
 
     bool updated = false;
+    double total_refine_ms = 0.0;
+    double total_schedule_wait_ms = 0.0;
     for (std::size_t index = 0; index < tracked_objects_.size(); ++index)
     {
       auto &worker = *tracked_objects_[index].tracking_worker;
       std::unique_lock<std::mutex> lock(worker.mutex);
       worker.job_finished.wait(lock, [&worker]() { return worker.finished; });
       const PoseResult result = worker.result;
+      timing.per_object_refine_ms[index] = result.refine_ms;
+      timing.per_object_schedule_wait_ms[index] = result.schedule_wait_ms;
+      total_refine_ms += result.refine_ms;
+      total_schedule_wait_ms += result.schedule_wait_ms;
       if (result.success)
       {
         tracked_objects_[result.object_index].last_pose = result.pose;
         updated = true;
       }
     }
+    const auto sync_end = std::chrono::steady_clock::now();
+    timing.multi_object_sync_total_ms =
+        foundationpose_profiling::MillisecondsBetween(run_start, sync_end);
+    timing.foundationpose_refine_ms = total_refine_ms;
+    timing.worker_scheduling_wait_ms = total_schedule_wait_ms;
+    timing.ffs_depth_estimation_ms = depth_timings.ffs_depth_estimation_ms;
+    timing.depth_confidence_filter_ms = depth_timings.depth_confidence_filter_ms;
+    timing.depth_restore_align_ms = depth_timings.depth_restore_align_ms;
     if (updated)
     {
-      PublishCurrentResults(header, rgb, "track");
+      timing.se3_filter_ms = PublishCurrentResults(header, rgb, "track");
     }
+    timing.end_to_end_ms =
+        foundationpose_profiling::MillisecondsBetween(frame_start, std::chrono::steady_clock::now());
+    return timing;
   }
 
   Eigen::Matrix4f SmoothPoseForDisplay(TrackedObject &object, const Eigen::Matrix4f &raw_pose) const
@@ -1019,8 +1132,9 @@ private:
     return output_header;
   }
 
-  void PublishCurrentResults(const std_msgs::msg::Header &header, const cv::Mat &rgb, const std::string &mode)
+  double PublishCurrentResults(const std_msgs::msg::Header &header, const cv::Mat &rgb, const std::string &mode)
   {
+    double se3_filter_ms = 0.0;
     const auto output_header = PoseHeader(header);
     for (std::size_t index = 0; index < tracked_objects_.size(); ++index)
     {
@@ -1029,7 +1143,10 @@ private:
       {
         continue;
       }
+      const auto filter_start = std::chrono::steady_clock::now();
       const Eigen::Matrix4f display_pose = SmoothPoseForDisplay(object, object.last_pose);
+      se3_filter_ms +=
+          foundationpose_profiling::MillisecondsBetween(filter_start, std::chrono::steady_clock::now());
       const auto pose_message = PoseMatrixToPoseStamped(object.last_pose, output_header);
       object.pose_publisher->publish(pose_message);
       if (index == 0)
@@ -1039,6 +1156,7 @@ private:
       }
     }
     PublishVisualization(output_header, rgb);
+    return se3_filter_ms;
   }
 
   void PrintFirstPose(const std_msgs::msg::Header &header, const Eigen::Matrix4f &pose,
@@ -1128,11 +1246,14 @@ private:
   int max_input_image_width_{640};
   std::size_t register_refine_iterations_{5};
   std::size_t track_refine_iterations_{2};
+  bool enable_profiling_{false};
+  int profiling_log_interval_frames_{30};
   Eigen::Matrix3f intrinsic_{Eigen::Matrix3f::Identity()};
   StereoCalibration calibration_;
   StereoRectificationMaps rectification_maps_;
   bool rectification_ready_{false};
   std::unique_ptr<StereoEstimator> stereo_estimator_;
+  std::unique_ptr<foundationpose_profiling::TrackingPerformanceProfiler> profiler_;
   std::vector<TrackedObject> tracked_objects_;
   std::chrono::steady_clock::time_point last_mask_attempt_time_{};
   std::mutex process_mutex_;
