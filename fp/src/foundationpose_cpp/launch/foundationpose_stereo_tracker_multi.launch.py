@@ -43,6 +43,7 @@ def generate_launch_description():
     box_threshold = LaunchConfiguration("box_threshold")
     enable_profiling = LaunchConfiguration("enable_profiling")
     profiling_log_interval_frames = LaunchConfiguration("profiling_log_interval_frames")
+    enable_depth_confidence_filter = LaunchConfiguration("enable_depth_confidence_filter")
 
     # The tracker links against both its package-local shared libraries and
     # the package-level detection library.  Keep these directories ahead of
@@ -87,6 +88,11 @@ def generate_launch_description():
             default_value="30",
             description="How often to print cumulative timing averages, in processed tracking frames.",
         ),
+        DeclareLaunchArgument(
+            "enable_depth_confidence_filter",
+            default_value="false",
+            description="Use full FFS photometric/edge/temporal confidence filtering before FoundationPose.",
+        ),
     ]
 
     clean_first_mask_output_dir = OpaqueFunction(
@@ -128,6 +134,9 @@ def generate_launch_description():
                 "enable_profiling": ParameterValue(enable_profiling, value_type=bool),
                 "profiling_log_interval_frames": ParameterValue(
                     profiling_log_interval_frames, value_type=int
+                ),
+                "enable_depth_confidence_filter": ParameterValue(
+                    enable_depth_confidence_filter, value_type=bool
                 ),
             },
         ],

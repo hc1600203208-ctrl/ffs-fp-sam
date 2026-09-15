@@ -57,6 +57,7 @@ struct DepthTimingBreakdown
 {
   double remap_prepare_ms{0.0};
   double ffs_depth_estimation_ms{0.0};
+  double depth_validity_filter_ms{0.0};
   double depth_confidence_filter_ms{0.0};
   double depth_restore_align_ms{0.0};
 };
@@ -65,6 +66,7 @@ struct TrackingFrameTiming
 {
   double end_to_end_ms{0.0};
   double ffs_depth_estimation_ms{0.0};
+  double depth_validity_filter_ms{0.0};
   double depth_confidence_filter_ms{0.0};
   double depth_restore_align_ms{0.0};
   double foundationpose_refine_ms{0.0};
@@ -120,6 +122,7 @@ public:
     last_tracked_at_ = now;
     end_to_end_.Add(timing.end_to_end_ms);
     ffs_depth_estimation_.Add(timing.ffs_depth_estimation_ms);
+    depth_validity_filter_.Add(timing.depth_validity_filter_ms);
     depth_confidence_filter_.Add(timing.depth_confidence_filter_ms);
     depth_restore_align_.Add(timing.depth_restore_align_ms);
     foundationpose_refine_.Add(timing.foundationpose_refine_ms);
@@ -166,6 +169,7 @@ private:
 
     end_to_end_.Reset();
     ffs_depth_estimation_.Reset();
+    depth_validity_filter_.Reset();
     depth_confidence_filter_.Reset();
     depth_restore_align_.Reset();
     foundationpose_refine_.Reset();
@@ -248,6 +252,7 @@ private:
     stream << "dropped_timestamp_frames=" << dropped_timestamp_frames_ << " ";
     stream << FormatStats("end_to_end", end_to_end_) << " ";
     stream << FormatStats("ffs_depth_estimation", ffs_depth_estimation_) << " ";
+    stream << FormatStats("depth_validity_filter", depth_validity_filter_) << " ";
     stream << FormatStats("depth_confidence_filter", depth_confidence_filter_) << " ";
     stream << FormatStats("depth_restore_align", depth_restore_align_) << " ";
     stream << FormatStats("foundationpose_refine_total", foundationpose_refine_) << " ";
@@ -276,6 +281,7 @@ private:
 
   TimingStats end_to_end_;
   TimingStats ffs_depth_estimation_;
+  TimingStats depth_validity_filter_;
   TimingStats depth_confidence_filter_;
   TimingStats depth_restore_align_;
   TimingStats foundationpose_refine_;

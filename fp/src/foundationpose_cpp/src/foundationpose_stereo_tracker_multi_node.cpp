@@ -30,6 +30,7 @@
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/header.hpp>
 
+#include "depth_confidence.hpp"
 #include "detection_6d_foundationpose/foundationpose.hpp"
 #include "detection_6d_foundationpose/mesh_loader.hpp"
 #include "estimator/fast_foundation_stereo_estimator.h"
@@ -552,6 +553,19 @@ private:
     declare_parameter<int>("track_refine_iterations", 2);
     declare_parameter<bool>("enable_profiling", false);
     declare_parameter<int>("profiling_log_interval_frames", 30);
+    declare_parameter<bool>("enable_depth_confidence_filter", false);
+    declare_parameter<int>("patch_radius", confidence_params_.patch_radius);
+    declare_parameter<int>("texture_ksize", confidence_params_.texture_ksize);
+    declare_parameter<double>("sigma_photo", confidence_params_.sigma_photo);
+    declare_parameter<double>("sigma_e", confidence_params_.sigma_e);
+    declare_parameter<double>("sigma_t", confidence_params_.sigma_t);
+    declare_parameter<double>("alpha_edge", confidence_params_.alpha_edge);
+    declare_parameter<double>("w_photo", confidence_params_.w_photo);
+    declare_parameter<double>("w_tex", confidence_params_.w_tex);
+    declare_parameter<double>("w_grad", confidence_params_.w_grad);
+    declare_parameter<double>("w_tmp", confidence_params_.w_tmp);
+    declare_parameter<double>("conf_threshold", confidence_params_.conf_threshold);
+    declare_parameter<double>("weight_gamma", confidence_params_.weight_gamma);
   }
 
   void LoadParameters()
@@ -592,6 +606,19 @@ private:
     enable_profiling_ = get_parameter("enable_profiling").as_bool();
     profiling_log_interval_frames_ = static_cast<int>(
         std::max<std::int64_t>(1, get_parameter("profiling_log_interval_frames").as_int()));
+    enable_depth_confidence_filter_ = get_parameter("enable_depth_confidence_filter").as_bool();
+    confidence_params_.patch_radius = get_parameter("patch_radius").as_int();
+    confidence_params_.texture_ksize = get_parameter("texture_ksize").as_int();
+    confidence_params_.sigma_photo = static_cast<float>(get_parameter("sigma_photo").as_double());
+    confidence_params_.sigma_e = static_cast<float>(get_parameter("sigma_e").as_double());
+    confidence_params_.sigma_t = static_cast<float>(get_parameter("sigma_t").as_double());
+    confidence_params_.alpha_edge = static_cast<float>(get_parameter("alpha_edge").as_double());
+    confidence_params_.w_photo = static_cast<float>(get_parameter("w_photo").as_double());
+    confidence_params_.w_tex = static_cast<float>(get_parameter("w_tex").as_double());
+    confidence_params_.w_grad = static_cast<float>(get_parameter("w_grad").as_double());
+    confidence_params_.w_tmp = static_cast<float>(get_parameter("w_tmp").as_double());
+    confidence_params_.conf_threshold = static_cast<float>(get_parameter("conf_threshold").as_double());
+    confidence_params_.weight_gamma = static_cast<float>(get_parameter("weight_gamma").as_double());
     intrinsic_ = BuildIntrinsicMatrix(get_parameter("fx").as_double(), get_parameter("fy").as_double(),
                                       get_parameter("cx").as_double(), get_parameter("cy").as_double());
 
@@ -793,11 +820,42 @@ private:
         static_cast<float>(min_depth_meters_), static_cast<float>(max_depth_meters_));
     if (timings != nullptr)
     {
-      timings->depth_confidence_filter_ms =
+      timings->depth_validity_filter_ms =
           foundationpose_profiling::MillisecondsBetween(depth_filter_start, std::chrono::steady_clock::now());
     }
+    cv::Mat depth_for_restore = depth_model;
+    if (enable_depth_confidence_filter_)
+    {
+      const auto confidence_start = std::chrono::steady_clock::now();
+      const cv::Mat confidence_map = depth_confidence::compute_confidence_map(
+          prepared_left.image, prepared_right.image, depth_model,
+          static_cast<float>(intrinsics.fx), static_cast<float>(intrinsics.fy),
+          static_cast<float>(intrinsics.cx), static_cast<float>(intrinsics.cy),
+          static_cast<float>(baseline), previous_depth_, confidence_params_);
+      if (confidence_map.empty())
+      {
+        if (timings != nullptr)
+        {
+          timings->depth_confidence_filter_ms =
+              foundationpose_profiling::MillisecondsBetween(confidence_start, std::chrono::steady_clock::now());
+        }
+        return false;
+      }
+      depth_for_restore = depth_confidence::filter_depth_with_confidence(
+          depth_model, confidence_map, confidence_params_.conf_threshold);
+      previous_depth_ = depth_model.clone();
+      if (timings != nullptr)
+      {
+        timings->depth_confidence_filter_ms =
+            foundationpose_profiling::MillisecondsBetween(confidence_start, std::chrono::steady_clock::now());
+      }
+    }
+    else if (timings != nullptr)
+    {
+      timings->depth_confidence_filter_ms = 0.0;
+    }
     const auto restore_start = std::chrono::steady_clock::now();
-    const cv::Mat depth_rectified = RestoreToRectifiedResolution(depth_model, prepared_left, left_rectified.size());
+    const cv::Mat depth_rectified = RestoreToRectifiedResolution(depth_for_restore, prepared_left, left_rectified.size());
     *depth = AlignRectifiedDepthToOriginalLeft(depth_rectified, rectification_maps_, cv::INTER_NEAREST);
     if (timings != nullptr)
     {
@@ -1080,6 +1138,7 @@ private:
     timing.foundationpose_refine_ms = total_refine_ms;
     timing.worker_scheduling_wait_ms = total_schedule_wait_ms;
     timing.ffs_depth_estimation_ms = depth_timings.ffs_depth_estimation_ms;
+    timing.depth_validity_filter_ms = depth_timings.depth_validity_filter_ms;
     timing.depth_confidence_filter_ms = depth_timings.depth_confidence_filter_ms;
     timing.depth_restore_align_ms = depth_timings.depth_restore_align_ms;
     if (updated)
@@ -1248,6 +1307,9 @@ private:
   std::size_t track_refine_iterations_{2};
   bool enable_profiling_{false};
   int profiling_log_interval_frames_{30};
+  bool enable_depth_confidence_filter_{false};
+  depth_confidence::ConfidenceParameters confidence_params_;
+  cv::Mat previous_depth_;
   Eigen::Matrix3f intrinsic_{Eigen::Matrix3f::Identity()};
   StereoCalibration calibration_;
   StereoRectificationMaps rectification_maps_;
