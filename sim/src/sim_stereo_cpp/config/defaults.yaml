@@ -1,6 +1,6 @@
 stereo_render_cpp_node:
   ros__parameters:
-    mesh_path: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
+    mesh_path: /home/hc/dataset/myobject/weixing1/weixing_mesh/textured_mesh.obj
     calibration_path: /home/hc/weizi/ffs+fp+sam/ffs/64091.txt
     width: 640
     height: 480

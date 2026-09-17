@@ -1,0 +1,23 @@
+查看/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/launch/foundationpose_stereo_tracker_multi.launch.py，现在我想基于该脚本的现有功能，制作一个可视化app交互界面，界面可以预先指定需要跟踪的物体，实时可视化显示各物体的位姿，并显示具体六自由度数值，一个开关用来控制开启和重置跟踪，重置跟踪用于跟丢时重启foundationpose的register模块开始跟踪，一个开关用来控制开启和关闭保存各物体的每帧实时六自由位姿数值到指定文件，设置一个开关是否在界面显示原始左右图像、彩色可视化视差图;请先完整阅读当前工程代码，理解项目结构、相关模块、调用链、数据流、编码规范和测试方式。不要立即修改文件,给出app方案。
+
+当前运行脚本ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py可以搭配播放ros2 bag play ~/bag/bluepink -l进行测试；我已经试过可以正常运行尽量不要修改当前已有文件，在新文件夹app中完成任务
+
+在当前基础上，对sim文件夹下的对mesh模型进行仿真渲染发布双目图像话题功能同样编写一个app，目前我已经能正常运行ros2 launch sim_stereo_cpp stereo_render_cpp.launch.py脚本启动节点发布双目话题，基于该++节点已有功能进行编写，忽略sim文件夹下python部分的内容。要求app界面可以手动指定mesh文件夹路径，输入初始的6自由度位姿和六自由度速度，显示当前渲染位置的六自由度位姿和实际估计输出的位姿；显示跟踪结果的可视化图和通过mesh模型实时渲染的源左相机图像，一个按钮控制启动和停止，一个按钮重置初始位置和速度，每次重置后都需要重新按启动按钮才开始运动；并且要求新增一个功能，给渲染的图像加上一个背景图，不再用全黑图，该背景图可以使用默认背景图像，也可以在app里指定。
+# AGENTS.md
+
+## 项目概述
+该项目包含三个子项目，第一个项目基于c++部署的foundationstereo双目深度估计项目，该项目通过ros2订阅双目图像话题，进行深度估计和置信度后处理发布深度图等话题；第二个项目是基于GINO+SAM的物体实例分割项目，该项目基于conda环境对任意未知物体进行分割，输入prompt提示词，输出物体分割mask图；第三个项目是基于c++部署的foundationpose六自由度位姿跟踪项目，该项目订阅左rgb图像和上一个项目发布的深度图话题，并用第二个项目提前分割的mask图作为第一帧mask；现在需要将这三个项目整合为一个总项目，免去中间复杂的ros2通信，只保留对原始双目图像的订阅，以及最终位姿跟踪结果的发布。
+
+目前已经可以跑通的子项目的启动脚本：
+第一个项目的启动脚本：/home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/launch/dnn_stereo_depth.launch.py
+第二个项目的启动脚本：/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_first_mask_node.py、
+第三个项目的启动脚本：ros2 run foundationpose_cpp foundationpose_file_mask_tracker_node \
+  --ros-args --params-file /home/hc/weizi/fp/src/foundationpose_cpp/config/foundationpose_file_mask_ros2_example.yaml
+
+
+查看当前的/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/launch/foundationpose_stereo_tracker_fast.launch.py的启动文件，先理解该启动文件的启动流程，然后将当前负责第一帧mask图生成的python脚本，替换为/home/hc/weizi/ffs+fp+sam/sam的c++部署版本，重新在sam中集成ros2，替换掉原来/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_first_mask_node.py的任务
+
+/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/launch/foundationpose_stereo_tracker_fast.launch.py的处理逻辑当前只能对一个物体进行位姿跟踪，当要修改物体时，必须提前准备好新的grounding dino的engine文件，并修改/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_fast_example.yaml配置文件中的mesh_path和object_name，现在我想同时跟踪多个不同的物体，请修改配置文件和代码逻辑，在第一帧进行多次mask提取来获取不同物体的mask区域，之后执行foundationpose推理时要对多个物体同时执行多个并行的跟踪，不同物体可视化时用不同颜色的包围框，三个旋转坐标轴仍然共用红蓝绿，且把物体名字打在物体的左上角，原先imshow显示框左上角打印的位姿输出只打印第一个物体的输出。增加一条要求，尽量不要修改当前工作区的其他代码，给新任务编写新的源文件、yaml配置文件和launch启动脚本。同时先用/home/hc/bag/bluepink bag包做测试bag，该bag中图像包含有blue carton和pink carton两个物体；mesh路径分别为blue carton: /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
+pink carton: /home/hc/dataset/myobject/lgj/bundlesdf_540/textured_mesh.obj ;engine文件路径为/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_blue_carton.engine和/home/hc/weizi/ffs+fp+sam/sam/engines/grounding_dino_fixed_pink_carton.engine
+
+ PERF_FINAL tracked_frames=100 registration_frames=6 output_fps=14.977637 sync_queue_size=10 max_sync_interval_sec=0.070000 dropped_busy_frames=0 dropped_timestamp_frames=0 end_to_end_count=100 end_to_end_avg=67.751637ms end_to_end_min=44.421570ms end_to_end_max=120.024468ms ffs_depth_estimation_count=100 ffs_depth_estimation_avg=30.003089ms ffs_depth_estimation_min=27.911598ms ffs_depth_estimation_max=36.424750ms depth_validity_filter_count=100 depth_validity_filter_avg=0.270057ms depth_validity_filter_min=0.248222ms depth_validity_filter_max=0.352003ms depth_confidence_filter_count=100 depth_confidence_filter_avg=0.000000ms depth_confidence_filter_min=0.000000ms depth_confidence_filter_max=0.000000ms depth_restore_align_count=100 depth_restore_align_avg=3.691758ms depth_restore_align_min=0.172082ms depth_restore_align_max=11.446415ms foundationpose_refine_total_count=100 foundationpose_refine_total_avg=12.290740ms foundationpose_refine_total_min=7.913858ms foundationpose_refine_total_max=54.578219ms foundationpose_refine_per_object=[blue carton:avg=6.214423ms/min=4.250391ms/max=23.712108ms, pink carton:avg=6.076317ms/min=3.559916ms/max=30.866111ms] se3_filter_count=100 se3_filter_avg=0.001274ms se3_filter_min=0.000940ms se3_filter_max=0.001760ms multi_object_dispatch_count=100 multi_object_dispatch_avg=0.056675ms multi_object_dispatch_min=0.005260ms multi_object_dispatch_max=3.068213ms multi_object_sync_total_count=100 multi_object_sync_total_avg=8.638534ms multi_object_sync_total_min=4.972687ms multi_object_sync_total_max=31.864339ms worker_schedule_wait_total_count=100 worker_schedule_wait_total_avg=3.017156ms worker_schedule_wait_total_min=0.015360ms worker_schedule_wait_total_max=7.309853ms worker_schedule_wait_per_object=[blue carton:avg=1.590380ms/min=0.006670ms/max=3.985319ms, pink carton:avg=1.426775ms/min=0.005580ms/max=4.260451ms]
