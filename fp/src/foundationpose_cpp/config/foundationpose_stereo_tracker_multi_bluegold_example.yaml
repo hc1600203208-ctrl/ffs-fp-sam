@@ -45,7 +45,7 @@ foundationpose_stereo_tracker_multi_node:
       - golden object
     tracked_mesh_paths:
       - /home/hc/weizi/dataset/jrnew-blue/mesh/textured_mesh.obj
-      - /home/hc/dataset/myobject/weixing1/weixing_mesh_surface/textured_mesh.obj
+      - /home/hc/dataset/myobject/weixing1/weixing_mesh/textured_mesh.obj
     mask_image_directory: /home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask_multi
     tracked_mask_image_names:
       - blue_carton.png

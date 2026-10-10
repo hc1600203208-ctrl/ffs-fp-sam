@@ -43,6 +43,13 @@ public:
      * @param outputDisp Output disparity map (Float, CV_32FC1)
      */
     bool inference(const cv::Mat& leftImg, const cv::Mat& rightImg, cv::Mat& outputDisp);
+    // Optional seven lowest negative mean-GWC costs at quarter resolution, channel first.
+    bool inference(const cv::Mat& leftImg, const cv::Mat& rightImg, cv::Mat& outputDisp,
+                   std::vector<cv::Mat>* topk_cost);
+    // Optional quarter-resolution peak of the network's aggregated disparity probability.
+    bool inference(const cv::Mat& leftImg, const cv::Mat& rightImg, cv::Mat& outputDisp,
+                   std::vector<cv::Mat>* topk_cost, cv::Mat* model_confidence);
+    bool hasModelConfidence() const { return m_dProb != nullptr; }
 
     void printIOTensors();
 
@@ -79,6 +86,7 @@ private:
     int m_featureRight04Channels = 0;
     int m_stem2xChannels = 0;
     int m_gwcGroups = 0;
+    int m_probDisparities = 0;
     size_t m_featuresLeft04Size;
     size_t m_featuresLeft08Size;
     size_t m_featuresLeft16Size;
@@ -101,15 +109,19 @@ private:
     std::unique_ptr<DeviceBuffer> m_dFeaturesRight04;
     std::unique_ptr<DeviceBuffer> m_dStem2x;
     std::unique_ptr<DeviceBuffer> m_dGwcVolume;
+    std::unique_ptr<DeviceBuffer> m_dTopKCost;
 
     std::unique_ptr<DeviceBuffer> m_dFeaturesLeft04Half;
     std::unique_ptr<DeviceBuffer> m_dFeaturesRight04Half;
 
     std::unique_ptr<DeviceBuffer> m_dDisp;
+    std::unique_ptr<DeviceBuffer> m_dProb;
 
     // Host (CPU) buffers for flattening/preprocessing
     // Output
     std::vector<float> m_hDisp;
+    std::vector<float> m_hTopKCost;
+    std::vector<float> m_hProb;
 
     std::unique_ptr<InputPadder> m_padder;
 
@@ -120,7 +132,8 @@ private:
     // void preprocessImage(const cv::Mat& src, std::vector<float>& dstBuffer);
     // void preprocessImage(const cv::Mat& leftImage, const cv::Mat& rightImage);
 
-    bool infer(const cv::Mat& leftImg, const cv::Mat& rightImg, cv::Mat& outputDisp);
+    bool infer(const cv::Mat& leftImg, const cv::Mat& rightImg, cv::Mat& outputDisp,
+               std::vector<cv::Mat>* topk_cost, cv::Mat* model_confidence);
 };
 
 

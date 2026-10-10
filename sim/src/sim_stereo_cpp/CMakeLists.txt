@@ -45,6 +45,33 @@ add_executable(stereo_render_cpp_node
   src/stereo_render_node.cpp
 )
 
+add_executable(stereo_render_multi_cpp_node
+  src/motion_profile.cpp
+  src/stereo_mesh_renderer.cpp
+  src/stereo_render_multi_node.cpp
+)
+
+target_include_directories(stereo_render_multi_cpp_node PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${FP_INSTALL_INCLUDE}
+  ${FP_SOURCE_INCLUDE}
+  ${FP_SOURCE_SRC}
+  ${FP_DEPLOY_INCLUDE}
+  ${FFS_STEREO_INCLUDE}
+  ${EIGEN3_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
+  ${CUDAToolkit_INCLUDE_DIRS}
+)
+target_link_directories(stereo_render_multi_cpp_node PRIVATE ${FP_INSTALL_LIB})
+target_link_libraries(stereo_render_multi_cpp_node
+  ${FOUNDATIONPOSE_DETECTION_LIB}
+  ${FOUNDATIONPOSE_DEPLOY_LIB}
+  CUDA::cudart
+  ${OpenCV_LIBS}
+)
+ament_target_dependencies(stereo_render_multi_cpp_node rclcpp sensor_msgs geometry_msgs)
+target_compile_options(stereo_render_multi_cpp_node PRIVATE -O3)
+
 target_include_directories(stereo_render_cpp_node PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${FP_INSTALL_INCLUDE}
@@ -83,8 +110,12 @@ set_target_properties(stereo_render_cpp_node PROPERTIES
   BUILD_RPATH "${FP_RUNTIME_LIB_DIR};${FP_RUNTIME_CUDA_DIR};${FP_RUNTIME_CVCUDA_DIR}"
   INSTALL_RPATH "${FP_RUNTIME_LIB_DIR};${FP_RUNTIME_CUDA_DIR};${FP_RUNTIME_CVCUDA_DIR}"
 )
+set_target_properties(stereo_render_multi_cpp_node PROPERTIES
+  BUILD_RPATH "${FP_RUNTIME_LIB_DIR};${FP_RUNTIME_CUDA_DIR};${FP_RUNTIME_CVCUDA_DIR}"
+  INSTALL_RPATH "${FP_RUNTIME_LIB_DIR};${FP_RUNTIME_CUDA_DIR};${FP_RUNTIME_CVCUDA_DIR}"
+)
 
-install(TARGETS stereo_render_cpp_node
+install(TARGETS stereo_render_cpp_node stereo_render_multi_cpp_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

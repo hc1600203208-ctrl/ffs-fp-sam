@@ -9,7 +9,7 @@ def generate_launch_description():
     launch_args = [
         DeclareLaunchArgument(
             "engine_file_path",
-           default_value='["/home/hc/model/ffs/23-36-37/feature_runner_fp16_5060.engine", "/home/hc/model/ffs/23-36-37/post_runner_fp16_5060.engine"]',
+           default_value='["/home/hc/model/ffs/23-36-37/feature_runner_fp16_5060.engine", "/home/hc/model/ffs/23-36-37/post_runner_with_prob_fp16_5060.engine"]',
             description="The absolute file path to the TensorRT engine files",
         ),
         DeclareLaunchArgument(
@@ -35,7 +35,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "output_subdir",
-            default_value="depth_fliter",
+            default_value="depth_filter",
             description="Output depth subdirectory under dataset_root",
         ),
         DeclareLaunchArgument(
@@ -48,6 +48,18 @@ def generate_launch_description():
             default_value="vis",
             description="Output directory for colorized depth visualization images; relative paths are resolved under dataset_root",
         ),
+        DeclareLaunchArgument("disparity_subdir", default_value="disparity",
+                              description="Output 16-bit disparity PNG directory (pixels x 256, at model resolution)"),
+        DeclareLaunchArgument("topk_cost_subdir", default_value="topk_cost",
+                              description="Output float32 top-7 matching-cost NPY directory"),
+        DeclareLaunchArgument("laf_rgb_subdir", default_value="laf_rgb",
+                              description="Output rectified left RGB directory at model resolution"),
+        DeclareLaunchArgument("model_confidence_subdir", default_value="ffs_confidence",
+                              description="Output FFS internal matching confidence PNG directory (uint16 / 65535)"),
+        DeclareLaunchArgument("model_filtered_depth_subdir", default_value="depth_ffs_filter",
+                              description="Output depth filtered only by FFS internal confidence"),
+        DeclareLaunchArgument("model_conf_threshold", default_value="0.3",
+                              description="FFS internal matching confidence threshold in [0, 1]"),
         DeclareLaunchArgument(
             "caminfo_path",
             default_value="jr714.txt",
@@ -109,6 +121,12 @@ def generate_launch_description():
             {"output_subdir": LaunchConfiguration("output_subdir")},
             {"raw_depth_subdir": LaunchConfiguration("raw_depth_subdir")},
             {"vis_subdir": LaunchConfiguration("vis_subdir")},
+            {"disparity_subdir": LaunchConfiguration("disparity_subdir")},
+            {"topk_cost_subdir": LaunchConfiguration("topk_cost_subdir")},
+            {"laf_rgb_subdir": LaunchConfiguration("laf_rgb_subdir")},
+            {"model_confidence_subdir": LaunchConfiguration("model_confidence_subdir")},
+            {"model_filtered_depth_subdir": LaunchConfiguration("model_filtered_depth_subdir")},
+            {"model_conf_threshold": LaunchConfiguration("model_conf_threshold")},
             {"caminfo_path": LaunchConfiguration("caminfo_path")},
             {"input_image_width": LaunchConfiguration("input_image_width")},
             {"input_image_height": LaunchConfiguration("input_image_height")},

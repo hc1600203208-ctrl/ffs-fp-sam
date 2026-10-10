@@ -17,6 +17,7 @@ tracking sequence must contain:
   tracking_dataset/
     rgb/
     depth/
+    depth_filter/  # optional; enabled with --include_tracking_filtered_depth
     masks/
     cam_K.txt
 
@@ -28,7 +29,10 @@ For every dataset it can:
   4. switch BundleSDF to the improved branch and reconstruct/evaluate only the
      best depth group;
   5. run/evaluate FoundationPose standard and adaptive-filter runners with both
-     baseline and improved meshes on the configured RGBD tracking sequence.
+     baseline and improved meshes, using raw tracking depth by default and
+     optionally confidence-filtered tracking depth.
+  6. optionally run/evaluate BundleTrack on the raw tracking sequence as a
+     comparison group, scored with the improved mesh and the same no-GT metrics.
 
 Use --bundle_shorter_side to keep the BundleSDF main and gaijin branches on the
 same RGB/depth/mask resize policy before comparing their meshes.
@@ -94,6 +98,32 @@ RECONSTRUCTION_METRIC_DIRECTIONS = {
 
 FOUNDATIONPOSE_RUNNERS = ("standard", "adaptive_filter")
 MESH_VARIANTS = ("main", "gaijin")
+RATF_ABLATIONS = (
+    ("baseline", False, False, False),
+    ("without_view_weighting", False, True, True),
+    ("without_depth_consistency", True, False, True),
+    ("without_hole_filling", True, True, False),
+    ("full_ratf", True, True, True),
+)
+
+
+def parse_foundationpose_failure_starts(values: Sequence[str]) -> Dict[str, str]:
+    valid_groups = {
+        f"{variant}:{runner}"
+        for variant in MESH_VARIANTS
+        for runner in FOUNDATIONPOSE_RUNNERS
+    }
+    parsed: Dict[str, str] = {}
+    for value in values:
+        group, separator, frame_id = value.partition("=")
+        group = group.replace("/", ":")
+        if separator != "=" or group not in valid_groups or not frame_id:
+            raise ValueError(
+                "--fp_failure_start_frame must be GROUP=FRAME, where GROUP is one of: "
+                + ", ".join(sorted(valid_groups))
+            )
+        parsed[group] = frame_id
+    return parsed
 
 
 @dataclass
@@ -106,6 +136,7 @@ class DatasetResult:
     best_method: str = ""
     gaijin_reconstruction_status: str = "pending"
     foundationpose_status: str = "pending"
+    bundletrack_status: str = "pending"
     elapsed_seconds: float = 0.0
     message: str = ""
 
@@ -690,6 +721,33 @@ def foundationpose_summary_path(base_output: Path, runner: str) -> Path:
     return foundationpose_debug_dir(base_output, runner) / "summary.json"
 
 
+def foundationpose_output_dir(
+    layout: DatasetLayout,
+    variant: str,
+    runner: str,
+    depth_variant: str,
+) -> Path:
+    output_dir = layout.foundationpose_output_root / variant / runner
+    if depth_variant == "confidence_filtered":
+        output_dir /= depth_variant
+    return output_dir
+
+
+def tracking_depth_inputs(
+    tracking_dataset_root: Path,
+    args: argparse.Namespace,
+) -> Tuple[Tuple[str, Path], ...]:
+    depth_inputs = (("raw", tracking_dataset_root / args.tracking_depth_subdir),)
+    if args.include_tracking_filtered_depth:
+        depth_inputs += (
+            (
+                "confidence_filtered",
+                tracking_dataset_root / args.tracking_filtered_depth_subdir,
+            ),
+        )
+    return depth_inputs
+
+
 def depth_benchmark_complete(
     dataset_root: Path,
     benchmark_root: Path,
@@ -724,10 +782,20 @@ def bundlesdf_summary_complete(summary_csv: Path) -> bool:
     )
 
 
-def foundationpose_complete(output_dir: Path, runner: str) -> bool:
+def foundationpose_complete(
+    output_dir: Path,
+    runner: str,
+    failure_start_frame: str = "",
+) -> bool:
     summary_path = foundationpose_summary_path(output_dir, runner)
     per_frame_path = summary_path.parent / "per_frame_metrics.csv"
-    return summary_path.is_file() and per_frame_path.is_file()
+    if not summary_path.is_file() or not per_frame_path.is_file():
+        return False
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    return summary.get("failure_start_frame", "") == failure_start_frame
 
 
 def validate_dataset(dataset_root: Path, args: argparse.Namespace) -> Path:
@@ -787,11 +855,14 @@ def looks_like_tracking_dataset(path: Path, args: argparse.Namespace) -> bool:
 
 def validate_tracking_dataset(tracking_root: Path, args: argparse.Namespace) -> Path:
     missing: List[str] = []
-    for relative in (
+    required_subdirs = [
         args.tracking_left_subdir,
         args.tracking_depth_subdir,
         args.tracking_mask_subdir,
-    ):
+    ]
+    if args.include_tracking_filtered_depth:
+        required_subdirs.append(args.tracking_filtered_depth_subdir)
+    for relative in required_subdirs:
         if not (tracking_root / relative).is_dir():
             missing.append(relative + "/")
 
@@ -818,6 +889,18 @@ def validate_tracking_dataset(tracking_root: Path, args: argparse.Namespace) -> 
         raise RuntimeError(
             f"Tracking RGB/depth/mask frame stems do not overlap in {tracking_root}"
         )
+    if args.include_tracking_filtered_depth:
+        filtered_depth_ids = set(image_stems(tracking_root / args.tracking_filtered_depth_subdir))
+        if not filtered_depth_ids:
+            raise RuntimeError(
+                "No confidence-filtered tracking depth images found in "
+                f"{tracking_root / args.tracking_filtered_depth_subdir}"
+            )
+        if not (rgb_ids & filtered_depth_ids & mask_ids):
+            raise RuntimeError(
+                "Tracking RGB/confidence-filtered-depth/mask frame stems do not overlap in "
+                f"{tracking_root}"
+            )
 
     return intrinsics_path
 
@@ -1004,6 +1087,7 @@ def build_bundlesdf_command(
     evaluation_root: Path,
     methods: Optional[Sequence[str]],
     args: argparse.Namespace,
+    ratf_modules: Optional[Tuple[bool, bool, bool]] = None,
 ) -> List[str]:
     command = [
         conda_executable(args.conda_prefix),
@@ -1048,6 +1132,18 @@ def build_bundlesdf_command(
         "--max_retries",
         str(args.bundle_max_retries),
     ]
+    if ratf_modules is not None:
+        view_weighting, depth_consistency, hole_filling = ratf_modules
+        command.extend(
+            [
+                "--texture_view_weighting",
+                str(int(view_weighting)),
+                "--texture_depth_filter",
+                str(int(depth_consistency)),
+                "--texture_hole_filling",
+                str(int(hole_filling)),
+            ]
+        )
     if args.overwrite:
         command.append("--overwrite")
     if args.stop_on_error:
@@ -1063,6 +1159,7 @@ def build_foundationpose_command(
     output_dir: Path,
     runner: str,
     args: argparse.Namespace,
+    failure_start_frame: str = "",
 ) -> List[str]:
     command = [
         conda_executable(args.conda_prefix),
@@ -1164,7 +1261,129 @@ def build_foundationpose_command(
         command.append("--disable_gating")
     if args.fp_disable_adaptive_R:
         command.append("--disable_adaptive_R")
+    if args.fp_save_track_vis:
+        command.append("--save_track_vis")
+    if args.fp_track_only:
+        command.append("--track_only")
+    if failure_start_frame:
+        command.extend(["--failure_start_frame", failure_start_frame])
     return command
+
+
+def build_bundletrack_evaluation_command(
+    tracking_dataset_root: Path,
+    mesh_path: Path,
+    pred_pose_dir: Path,
+    output_dir: Path,
+    args: argparse.Namespace,
+    exclude_frame_ids_file: Optional[Path] = None,
+) -> List[str]:
+    command = [
+        conda_executable(args.conda_prefix),
+        "run",
+        "--no-capture-output",
+        "-n",
+        args.foundationpose_conda_env,
+        "python",
+        str(args.foundationpose_root / "evaluate_pose_tracking_no_gt.py"),
+        "--rgb_dir",
+        str(tracking_dataset_root / args.tracking_left_subdir),
+        "--depth_dir",
+        str(tracking_dataset_root / args.tracking_depth_subdir),
+        "--mask_dir",
+        str(tracking_dataset_root / args.tracking_mask_subdir),
+        "--mesh_path",
+        str(mesh_path),
+        "--pred_pose",
+        str(pred_pose_dir),
+        "--intrinsics",
+        str(tracking_dataset_root / args.tracking_intrinsics_name),
+        "--output_dir",
+        str(output_dir),
+        "--depth_scale",
+        str(args.depth_scale),
+        "--num_points",
+        str(args.fp_num_points),
+        "--mask_threshold",
+        str(args.fp_mask_threshold),
+        "--depth_min",
+        str(args.fp_depth_min),
+        "--depth_max",
+        str(args.fp_depth_max),
+        "--render_mode",
+        args.fp_render_mode,
+        "--render_max_faces",
+        str(args.fp_render_max_faces),
+        "--render_point_radius",
+        str(args.fp_render_point_radius),
+        "--max_observed_points",
+        str(args.fp_max_observed_points),
+        "--min_points",
+        str(args.fp_min_points),
+        "--icp_max_iterations",
+        str(args.fp_icp_max_iterations),
+        "--icp_tolerance",
+        str(args.fp_icp_tolerance),
+        "--icp_max_correspondence_dist",
+        str(args.fp_icp_max_correspondence_dist),
+        "--progress_interval",
+        str(args.fp_progress_interval),
+        "--max_frames",
+        str(args.fp_max_frames),
+    ]
+    if args.fp_use_open3d:
+        command.append("--use_open3d")
+    if args.fp_verbose:
+        command.append("--verbose")
+    if exclude_frame_ids_file is not None:
+        command.extend(["--exclude_frame_ids_file", str(exclude_frame_ids_file)])
+    return command
+
+
+def align_bundletrack_poses(
+    pose_dir: Path,
+    reference_pose_dir: Path,
+    output_dir: Path,
+) -> Path:
+    import numpy as np
+
+    pose_files = {path.stem: path for path in pose_dir.glob("*.txt")}
+    reference_files = {path.stem: path for path in reference_pose_dir.glob("*.txt")}
+    common_ids = sorted(set(pose_files) & set(reference_files), key=natural_sort_key)
+    if not common_ids:
+        raise RuntimeError(
+            f"No shared pose ids between BundleTrack {pose_dir} and reference {reference_pose_dir}"
+        )
+
+    anchor_id = common_ids[0]
+    bundle_anchor = np.loadtxt(pose_files[anchor_id], dtype=float).reshape(4, 4)
+    reference_anchor = np.loadtxt(reference_files[anchor_id], dtype=float).reshape(4, 4)
+    correction = np.linalg.inv(bundle_anchor) @ reference_anchor
+
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True)
+    for frame_id, pose_path in sorted(pose_files.items(), key=lambda item: natural_sort_key(item[0])):
+        pose = np.loadtxt(pose_path, dtype=float).reshape(4, 4)
+        aligned_pose = pose @ correction
+        if not np.isfinite(aligned_pose).all():
+            raise RuntimeError(f"Non-finite aligned BundleTrack pose for frame {frame_id}")
+        np.savetxt(output_dir / pose_path.name, aligned_pose, fmt="%.10f")
+
+    metadata_path = output_dir.parent / "pose_alignment.json"
+    write_json(
+        metadata_path,
+        {
+            "method": "first_frame_rigid_alignment",
+            "anchor_frame": anchor_id,
+            "raw_pose_dir": str(pose_dir),
+            "reference_pose_dir": str(reference_pose_dir),
+            "aligned_pose_dir": str(output_dir),
+            "correction_right_multiply": correction.tolist(),
+            "num_poses": len(pose_files),
+        },
+    )
+    return metadata_path
 
 
 def run_depth_benchmark(
@@ -1201,6 +1420,124 @@ def run_depth_benchmark(
     return "dry_run" if args.dry_run else "completed"
 
 
+def run_confidence_reconstruction_comparison(
+    dataset_root: Path,
+    caminfo_path: Path,
+    layout: DatasetLayout,
+    branch_guard: GitBranchGuard,
+    args: argparse.Namespace,
+) -> Tuple[str, str]:
+    input_root = layout.evaluate_root / "depth_confidence_inputs"
+    threshold_name = str(args.ffs_model_conf_threshold).replace(".", "_")
+    laf_threshold_name = str(args.laf_conf_threshold).replace(".", "_")
+    ffs_method = f"ffs_internal/threshold_{threshold_name}"
+    laf_method = f"laf/threshold_{laf_threshold_name}"
+    confnet_method = f"confnet/otb_threshold_{str(args.confnet_conf_threshold).replace('.', '_')}"
+    ffs_depth = selected_depth_dir(layout, ffs_method)
+    laf_depth = selected_depth_dir(layout, laf_method)
+    confnet_depth = selected_depth_dir(layout, confnet_method)
+    expected = set(image_stems(dataset_root / args.left_subdir))
+
+    if args.overwrite or set(image_stems(ffs_depth)) != expected or not (
+        set(image_stems(input_root / "raw_depth")) == expected
+        and set(image_stems(input_root / "disparity")) == expected
+        and set(image_stems(input_root / "laf_rgb")) == expected
+        and {path.stem for path in (input_root / "topk_cost").glob("*.npy")} == expected
+    ):
+        launch_args = {
+            "engine_file_path": args.confidence_engine_file_path,
+            "dataset_root": str(dataset_root),
+            "left_subdir": args.left_subdir,
+            "right_subdir": args.right_subdir,
+            "caminfo_path": str(caminfo_path),
+            "output_subdir": str(input_root / "adaptive_depth"),
+            "raw_depth_subdir": str(input_root / "raw_depth"),
+            "vis_subdir": str(input_root / "vis"),
+            "disparity_subdir": str(input_root / "disparity"),
+            "topk_cost_subdir": str(input_root / "topk_cost"),
+            "laf_rgb_subdir": str(input_root / "laf_rgb"),
+            "model_confidence_subdir": str(input_root / "ffs_confidence"),
+            "model_filtered_depth_subdir": str(ffs_depth),
+            "model_conf_threshold": str(args.ffs_model_conf_threshold),
+            "input_image_width": str(args.input_image_width),
+            "input_image_height": str(args.input_image_height),
+            "model_input_width": str(args.model_input_width),
+            "model_input_height": str(args.model_input_height),
+            "min_depth_meters": str(args.min_depth_meters),
+            "max_depth_meters": str(args.max_depth_meters),
+            "depth_scale": str(args.depth_scale),
+            "save_input_resolution": str(args.save_input_resolution).lower(),
+        }
+        command = sourced_command(
+            ["ros2", "launch", args.depth_launch_package, "offline_stereo_depth.launch.py",
+             *[f"{key}:={value}" for key, value in launch_args.items()]],
+            args.ros_setup_files,
+        )
+        code = run_logged(command, dataset_root, layout.logs_root / "depth_confidence_ffs.log",
+                          f"{dataset_root.name}:confidence_ffs",
+                          args.depth_stall_timeout_minutes * 60, args.dry_run)
+        if code or (not args.dry_run and set(image_stems(ffs_depth)) != expected):
+            raise RuntimeError("FFS internal confidence depth generation failed")
+
+    if not args.skip_laf_confidence and (args.overwrite or set(image_stems(laf_depth)) != expected):
+        command = [
+            conda_executable(args.conda_prefix), "run", "--no-capture-output", "-n", args.laf_conda_env,
+            "python", str(Path(__file__).with_name("filter_depth_laf.py")),
+            "--laf_root", str(args.laf_root), "--input_root", str(input_root),
+            "--output_dir", str(laf_depth),
+            "--confidence_dir", str(input_root / "laf_confidence"),
+            "--calibration", str(caminfo_path),
+            "--threshold", str(args.laf_conf_threshold),
+        ]
+        if args.save_input_resolution:
+            command.append("--aligned")
+        code = run_logged(command, dataset_root, layout.logs_root / "depth_confidence_laf.log",
+                          f"{dataset_root.name}:confidence_laf",
+                          args.depth_stall_timeout_minutes * 60, args.dry_run)
+        if code or (not args.dry_run and set(image_stems(laf_depth)) != expected):
+            raise RuntimeError("LAF confidence depth generation failed")
+
+    if args.overwrite or set(image_stems(confnet_depth)) != expected:
+        command = [
+            conda_executable(args.conda_prefix), "run", "--no-capture-output", "-n", args.confnet_conda_env,
+            "python", str(Path(__file__).with_name("filter_depth_confnet.py")),
+            "--confnet_root", str(args.confnet_root),
+            "--checkpoint", str(args.confnet_checkpoint),
+            "--dataset_root", str(dataset_root), "--right_subdir", args.right_subdir,
+            "--input_root", str(input_root), "--output_dir", str(confnet_depth),
+            "--calibration", str(caminfo_path),
+            "--threshold", str(args.confnet_conf_threshold),
+        ]
+        if args.save_input_resolution:
+            command.append("--aligned")
+        code = run_logged(command, dataset_root, layout.logs_root / "depth_confidence_confnet.log",
+                          f"{dataset_root.name}:confidence_confnet",
+                          args.depth_stall_timeout_minutes * 60, args.dry_run)
+        if code or (not args.dry_run and set(image_stems(confnet_depth)) != expected):
+            raise RuntimeError("ConfNet OTB confidence depth generation failed")
+
+    reconstruction_root = layout.evaluate_root / "reconstruction_confidence"
+    methods = [ffs_method, confnet_method]
+    if not args.skip_laf_confidence:
+        methods.insert(1, laf_method)
+    status = run_bundlesdf_batch(
+        dataset_root, layout, branch_guard, args.bundlesdf_main_branch,
+        layout.evaluate_root / "bundlesdf_confidence", reconstruction_root,
+        methods, "confidence", args,
+    )
+    if not args.dry_run:
+        existing = layout.main_reconstruction_eval_root / "summary.csv"
+        new = reconstruction_root / "summary.csv"
+        rows = read_csv_dicts(existing) + read_csv_dicts(new)
+        comparison = layout.evaluate_root / "reconstruction_confidence_comparison.csv"
+        with comparison.open("w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=list(dict.fromkeys(key for row in rows for key in row)))
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"[confidence] comparison: {comparison}", flush=True)
+    return "completed", status
+
+
 def run_bundlesdf_batch(
     dataset_root: Path,
     layout: DatasetLayout,
@@ -1211,6 +1548,7 @@ def run_bundlesdf_batch(
     methods: Optional[Sequence[str]],
     label: str,
     args: argparse.Namespace,
+    ratf_modules: Optional[Tuple[bool, bool, bool]] = None,
 ) -> str:
     if label == "main" and args.skip_main_reconstruction:
         return "skipped_by_option"
@@ -1236,6 +1574,7 @@ def run_bundlesdf_batch(
         evaluation_root=evaluation_root,
         methods=methods,
         args=args,
+        ratf_modules=ratf_modules,
     )
     return_code = run_logged(
         command,
@@ -1248,6 +1587,66 @@ def run_bundlesdf_batch(
     if return_code != 0:
         raise RuntimeError(f"BundleSDF {label} batch failed with exit code {return_code}")
     return "dry_run" if args.dry_run else "completed"
+
+
+def write_ratf_ablation_summary(
+    layout: DatasetLayout,
+    method: str,
+    args: argparse.Namespace,
+) -> Optional[Path]:
+    rows: List[Dict[str, Any]] = []
+    for name, view_weighting, depth_consistency, hole_filling in RATF_ABLATIONS:
+        summary_path = layout.evaluate_root / args.ratf_ablation_eval_dir / name / "summary.csv"
+        if not summary_path.is_file():
+            continue
+        result = next((row for row in read_csv_dicts(summary_path) if row.get("method") == method), None)
+        if result is not None:
+            rows.append(
+                {
+                    "ablation": name,
+                    "view_weighting": int(view_weighting),
+                    "depth_consistency": int(depth_consistency),
+                    "hole_filling": int(hole_filling),
+                    **result,
+                }
+            )
+    if not rows:
+        return None
+
+    output_path = layout.evaluate_root / "ratf_ablation_summary.csv"
+    fields = list(rows[0])
+    with output_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    return output_path
+
+
+def run_ratf_ablation(
+    dataset_root: Path,
+    layout: DatasetLayout,
+    branch_guard: GitBranchGuard,
+    method: str,
+    args: argparse.Namespace,
+) -> str:
+    statuses = []
+    for name, view_weighting, depth_consistency, hole_filling in RATF_ABLATIONS:
+        statuses.append(
+            run_bundlesdf_batch(
+                dataset_root=dataset_root,
+                layout=layout,
+                branch_guard=branch_guard,
+                branch=args.bundlesdf_gaijin_branch,
+                output_root=layout.evaluate_root / args.ratf_ablation_bundlesdf_dir / name,
+                evaluation_root=layout.evaluate_root / args.ratf_ablation_eval_dir / name,
+                methods=[method],
+                label=f"ratf_{name}",
+                args=args,
+                ratf_modules=(view_weighting, depth_consistency, hole_filling),
+            )
+        )
+    write_ratf_ablation_summary(layout, method, args)
+    return "dry_run" if all(status == "dry_run" for status in statuses) else "completed"
 
 
 def write_reconstruction_comparison(layout: DatasetLayout, method: str) -> Optional[Path]:
@@ -1308,82 +1707,351 @@ def run_foundationpose_experiments(
             assert tracking_intrinsics_path is not None
             rgbd_root = tracking_dataset_root
             rgb_subdir = args.tracking_left_subdir
-            depth_dir = tracking_dataset_root / args.tracking_depth_subdir
             mask_subdir = args.tracking_mask_subdir
             intrinsics_path = tracking_intrinsics_path
+            depth_inputs = tracking_depth_inputs(tracking_dataset_root, args)
         else:
             rgbd_root = dataset_root
             rgb_subdir = args.left_subdir
-            depth_dir = depth_dir_for_foundationpose(
-                layout,
-                method=method,
-                variant=variant,
-                source=args.foundationpose_depth_source,
+            depth_inputs = (
+                (
+                    args.foundationpose_depth_source,
+                    depth_dir_for_foundationpose(
+                        layout,
+                        method=method,
+                        variant=variant,
+                        source=args.foundationpose_depth_source,
+                    ),
+                ),
             )
             mask_subdir = args.mask_subdir
             intrinsics_path = dataset_root / "cam_K.txt"
 
-        if not depth_dir.is_dir() and not args.dry_run:
-            raise FileNotFoundError(f"FoundationPose depth dir does not exist: {depth_dir}")
+        for depth_variant, depth_dir in depth_inputs:
+            if not depth_dir.is_dir() and not args.dry_run:
+                raise FileNotFoundError(f"FoundationPose depth dir does not exist: {depth_dir}")
 
-        scene_name = (
-            f"{method.replace('/', '__')}__{variant}__"
-            f"{args.foundationpose_depth_source}__{rgbd_root.name}"
-        )
-        scene_dir = prepare_foundationpose_scene(
-            scene_dir=layout.foundationpose_scene_root / scene_name,
-            rgbd_root=rgbd_root,
-            depth_dir=depth_dir,
-            rgb_subdir=rgb_subdir,
-            mask_subdir=mask_subdir,
-            intrinsics_path=intrinsics_path,
-        )
+            scene_source = args.foundationpose_depth_source
+            if depth_variant == "confidence_filtered":
+                scene_source += "__confidence_filtered"
+            scene_name = (
+                f"{method.replace('/', '__')}__{variant}__"
+                f"{scene_source}__{rgbd_root.name}"
+            )
+            scene_dir = prepare_foundationpose_scene(
+                scene_dir=layout.foundationpose_scene_root / scene_name,
+                rgbd_root=rgbd_root,
+                depth_dir=depth_dir,
+                rgb_subdir=rgb_subdir,
+                mask_subdir=mask_subdir,
+                intrinsics_path=intrinsics_path,
+            )
 
-        for runner in FOUNDATIONPOSE_RUNNERS:
-            output_dir = layout.foundationpose_output_root / variant / runner
-            if (
-                not args.overwrite
-                and not args.fp_overwrite_metrics
-                and foundationpose_complete(output_dir, runner)
-            ):
-                print(
-                    f"[FoundationPose:{variant}:{runner}] summary already exists: "
-                    f"{foundationpose_summary_path(output_dir, runner)}",
-                    flush=True,
+            for runner in FOUNDATIONPOSE_RUNNERS:
+                output_dir = foundationpose_output_dir(layout, variant, runner, depth_variant)
+                label = f"{variant}:{runner}:{depth_variant}"
+                failure_start_frame = args.fp_failure_start_frame_map.get(
+                    f"{variant}:{runner}", ""
                 )
-                continue
-
-            if args.overwrite and not args.fp_overwrite_metrics and not args.dry_run:
-                debug_dir = foundationpose_debug_dir(output_dir, runner)
-                if debug_dir.exists():
-                    shutil.rmtree(debug_dir)
-
-            command = build_foundationpose_command(
-                scene_dir=scene_dir,
-                mesh_path=mesh_path,
-                output_dir=output_dir,
-                runner=runner,
-                args=args,
-            )
-            return_code = run_logged(
-                command,
-                cwd=args.foundationpose_root,
-                log_path=layout.logs_root / f"foundationpose_{variant}_{runner}.log",
-                label=f"{dataset_root.name}:fp_{variant}_{runner}",
-                stall_timeout_seconds=args.fp_stall_timeout_minutes * 60.0,
-                dry_run=args.dry_run,
-            )
-            if return_code != 0:
-                failed = True
-                if args.stop_on_error:
-                    raise RuntimeError(
-                        f"FoundationPose {variant}/{runner} failed with exit code {return_code}"
+                if (
+                    not args.overwrite
+                    and not args.fp_overwrite_metrics
+                    and foundationpose_complete(output_dir, runner, failure_start_frame)
+                ):
+                    print(
+                        f"[FoundationPose:{label}] summary already exists: "
+                        f"{foundationpose_summary_path(output_dir, runner)}",
+                        flush=True,
                     )
+                    continue
 
-    write_foundationpose_summary(layout, tracking_dataset_root)
+                if args.overwrite and not args.fp_overwrite_metrics and not args.dry_run:
+                    debug_dir = foundationpose_debug_dir(output_dir, runner)
+                    if debug_dir.exists():
+                        shutil.rmtree(debug_dir)
+
+                command = build_foundationpose_command(
+                    scene_dir=scene_dir,
+                    mesh_path=mesh_path,
+                    output_dir=output_dir,
+                    runner=runner,
+                    args=args,
+                    failure_start_frame=failure_start_frame,
+                )
+                log_suffix = f"_{depth_variant}" if depth_variant == "confidence_filtered" else ""
+                return_code = run_logged(
+                    command,
+                    cwd=args.foundationpose_root,
+                    log_path=layout.logs_root
+                    / f"foundationpose_{variant}_{runner}{log_suffix}.log",
+                    label=f"{dataset_root.name}:fp_{label}",
+                    stall_timeout_seconds=args.fp_stall_timeout_minutes * 60.0,
+                    dry_run=args.dry_run,
+                )
+                if return_code != 0:
+                    failed = True
+                    if args.stop_on_error:
+                        raise RuntimeError(
+                            f"FoundationPose {label} failed with exit code {return_code}"
+                        )
+
+    write_foundationpose_summary(layout, tracking_dataset_root, method, args)
     if args.dry_run:
         return "dry_run"
     return "failed" if failed else "completed"
+
+
+def write_bundletrack_comparison(
+    output_root: Path,
+    tracking_dataset_root: Path,
+    mesh_path: Path,
+    depth_dir: Path,
+    render_mode: str,
+    foundationpose_summary_path: Path,
+    bundletrack_summary_path: Path,
+) -> Optional[Path]:
+    if not foundationpose_summary_path.is_file() or not bundletrack_summary_path.is_file():
+        return None
+
+    foundationpose_summary = json.loads(foundationpose_summary_path.read_text(encoding="utf-8"))
+    groups = (
+        foundationpose_summary.get("results", {})
+        .get("gaijin", {})
+        .get("adaptive_filter", {})
+    )
+    references = [
+        groups[name]
+        for name in sorted(groups, key=lambda value: value != "raw")
+        if isinstance(groups[name], Mapping)
+    ]
+    if not references:
+        return None
+
+    bundletrack = json.loads(bundletrack_summary_path.read_text(encoding="utf-8"))
+    bundletrack.update(
+        tracker="bundletrack",
+        tracking_run_summary=str(output_root / "tracking" / "run_summary.yml"),
+    )
+    output_path = output_root / "comparison.json"
+    write_json(
+        output_path,
+        {
+            "dataset": str(tracking_dataset_root),
+            "mesh": str(mesh_path),
+            "depth": str(depth_dir),
+            "render_mode": render_mode,
+            "alignment": str(output_root / "tracking" / "pose_alignment.json"),
+            "bundletrack": bundletrack,
+            "foundationpose": references,
+        },
+    )
+    print(f"[BundleTrack] comparison: {output_path}", flush=True)
+    return output_path
+
+
+def bundletrack_failed_frame_ids_file(
+    output_root: Path,
+    run_summary: Path,
+    pipeline_log: Path,
+) -> Path:
+    output_path = output_root / "tracking" / "failed_frame_ids.txt"
+    if output_path.is_file():
+        return output_path
+
+    summary_text = run_summary.read_text(encoding="utf-8")
+    match = re.search(r"^num_failed_frames:\s*(\d+)\s*$", summary_text, flags=re.MULTILINE)
+    expected = int(match.group(1)) if match else None
+    if expected == 0:
+        output_path.write_text("", encoding="utf-8")
+        return output_path
+
+    for log_path in (pipeline_log, output_root / "logs" / "bundletrack.log"):
+        if not log_path.is_file():
+            continue
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        if "\n===== " in log_text:
+            log_text = "\n===== " + log_text.rsplit("\n===== ", 1)[1]
+        failed_ids = re.findall(r"frame\s+(\S+)\s+finished:\s+status=FAIL", log_text)
+        if expected is None or len(failed_ids) == expected:
+            output_path.write_text(
+                "".join(f"{frame_id}\n" for frame_id in failed_ids),
+                encoding="utf-8",
+            )
+            return output_path
+
+    raise RuntimeError(
+        f"Could not recover {expected} BundleTrack failed frame ids for {output_root}"
+    )
+
+
+def bundletrack_evaluation_complete(summary_path: Path, failed_frame_ids_file: Path) -> bool:
+    if not summary_path.is_file() or not failed_frame_ids_file.is_file():
+        return False
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    failed_count = sum(
+        1
+        for line in failed_frame_ids_file.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    return (
+        summary.get("num_frames_excluded") == failed_count
+        and summary.get("exclude_frame_ids_file") == str(failed_frame_ids_file)
+    )
+
+
+def run_bundletrack_experiment(
+    dataset_root: Path,
+    tracking_dataset_root: Optional[Path],
+    layout: DatasetLayout,
+    method: str,
+    args: argparse.Namespace,
+) -> str:
+    if not args.run_bundletrack:
+        return "skipped_by_option"
+    if tracking_dataset_root is None:
+        raise RuntimeError("BundleTrack requires a resolved RGBD tracking dataset")
+
+    output_root = (
+        resolve_under(layout.evaluate_root, args.bundletrack_output_dir)
+        if args.bundletrack_output_dir
+        else tracking_dataset_root / "evaluate" / "bundletrack"
+    )
+    tracking_output = output_root / "tracking"
+    pose_dir = tracking_output / "ob_in_cam"
+    aligned_pose_dir = tracking_output / "ob_in_cam_aligned"
+    run_summary = tracking_output / "run_summary.yml"
+    evaluation_output = (
+        output_root / "evaluation" / f"raw_depth_gaijin_{args.fp_render_mode}"
+    )
+    evaluation_summary = evaluation_output / "foundationpose_debug" / "summary.json"
+    mesh_path = mesh_path_for(layout, "gaijin", method)
+    if args.bundletrack_reference_pose_dir:
+        reference_pose_dir = expand_path(args.bundletrack_reference_pose_dir).resolve()
+    else:
+        reference_pose_dir = (
+            foundationpose_debug_dir(
+                foundationpose_output_dir(layout, "gaijin", "adaptive_filter", "raw"),
+                "adaptive_filter",
+            )
+            / "ob_in_cam"
+        )
+    if not mesh_path.is_file() and not args.dry_run:
+        raise FileNotFoundError(f"Mesh for BundleTrack evaluation does not exist: {mesh_path}")
+
+    preserve_predictions = args.overwrite and args.fp_overwrite_metrics
+    if args.dry_run or not run_summary.is_file() or not pose_dir.is_dir() or (
+        args.overwrite and not preserve_predictions
+    ):
+        tracking_command = [
+            conda_executable(args.conda_prefix),
+            "run",
+            "--no-capture-output",
+            "-n",
+            args.bundlesdf_conda_env,
+            "python",
+            str(args.bundlesdf_root / "demo_bundletrack_jrgolden.py"),
+            "--video_dir",
+            str(tracking_dataset_root),
+            "--out_dir",
+            str(tracking_output),
+            "--depth_scale",
+            str(args.depth_scale),
+            "--debug_level",
+            str(args.bundle_debug_level),
+            "--max_ba_frames",
+            str(args.bundletrack_max_ba_frames),
+            "--overwrite",
+        ]
+        return_code = run_logged(
+            tracking_command,
+            cwd=args.bundlesdf_root,
+            log_path=layout.logs_root / "bundletrack_tracking.log",
+            label=f"{dataset_root.name}:bundletrack",
+            stall_timeout_seconds=args.bundletrack_stall_timeout_minutes * 60.0,
+            dry_run=args.dry_run,
+        )
+        if return_code != 0:
+            return "failed"
+    else:
+        print(f"[BundleTrack] existing poses found: {pose_dir}", flush=True)
+
+    failed_frame_ids_file = tracking_output / "failed_frame_ids.txt"
+    if not args.dry_run:
+        failed_frame_ids_file = bundletrack_failed_frame_ids_file(
+            output_root=output_root,
+            run_summary=run_summary,
+            pipeline_log=layout.logs_root / "bundletrack_tracking.log",
+        )
+
+    if (
+        bundletrack_evaluation_complete(evaluation_summary, failed_frame_ids_file)
+        and not args.overwrite
+        and not args.fp_overwrite_metrics
+    ):
+        print(f"[BundleTrack] summary already exists: {evaluation_summary}", flush=True)
+        write_bundletrack_comparison(
+            output_root=output_root,
+            tracking_dataset_root=tracking_dataset_root,
+            mesh_path=mesh_path,
+            depth_dir=tracking_dataset_root / args.tracking_depth_subdir,
+            render_mode=args.fp_render_mode,
+            foundationpose_summary_path=layout.evaluate_root
+            / "foundationpose_tracking_summary.json",
+            bundletrack_summary_path=evaluation_summary,
+        )
+        return "already_complete"
+
+    if args.dry_run:
+        print(
+            f"[BundleTrack] would align {pose_dir} to first pose in {reference_pose_dir}",
+            flush=True,
+        )
+    else:
+        if not reference_pose_dir.is_dir():
+            raise FileNotFoundError(
+                "BundleTrack requires FoundationPose gaijin/adaptive_filter/raw poses "
+                f"for first-frame alignment: {reference_pose_dir}"
+            )
+        alignment_path = align_bundletrack_poses(
+            pose_dir=pose_dir,
+            reference_pose_dir=reference_pose_dir,
+            output_dir=aligned_pose_dir,
+        )
+        print(f"[BundleTrack] pose alignment: {alignment_path}", flush=True)
+
+    evaluation_command = build_bundletrack_evaluation_command(
+        tracking_dataset_root=tracking_dataset_root,
+        mesh_path=mesh_path,
+        pred_pose_dir=aligned_pose_dir,
+        output_dir=evaluation_output,
+        args=args,
+        exclude_frame_ids_file=failed_frame_ids_file,
+    )
+    return_code = run_logged(
+        evaluation_command,
+        cwd=args.foundationpose_root,
+        log_path=layout.logs_root / "bundletrack_evaluation.log",
+        label=f"{dataset_root.name}:bundletrack_evaluation",
+        stall_timeout_seconds=args.fp_stall_timeout_minutes * 60.0,
+        dry_run=args.dry_run,
+    )
+    if return_code != 0:
+        return "failed"
+    if not args.dry_run:
+        write_bundletrack_comparison(
+            output_root=output_root,
+            tracking_dataset_root=tracking_dataset_root,
+            mesh_path=mesh_path,
+            depth_dir=tracking_dataset_root / args.tracking_depth_subdir,
+            render_mode=args.fp_render_mode,
+            foundationpose_summary_path=layout.evaluate_root
+            / "foundationpose_tracking_summary.json",
+            bundletrack_summary_path=evaluation_summary,
+        )
+    return "dry_run" if args.dry_run else "completed"
 
 
 def flatten_json(prefix: str, value: Any, output: Dict[str, Any]) -> None:
@@ -1398,6 +2066,8 @@ def compact_foundationpose_metrics(row: Mapping[str, Any]) -> Dict[str, Any]:
     preferred = [
         "mesh_variant",
         "runner",
+        "depth_variant",
+        "depth_dir",
         "tracking_dataset",
         "num_frames_total",
         "num_frames_evaluated",
@@ -1424,32 +2094,59 @@ def compact_foundationpose_metrics(row: Mapping[str, Any]) -> Dict[str, Any]:
 def write_foundationpose_summary(
     layout: DatasetLayout,
     tracking_dataset_root: Optional[Path],
+    method: str,
+    args: argparse.Namespace,
 ) -> Optional[Path]:
     rows: List[Dict[str, Any]] = []
-    results_by_variant: Dict[str, Dict[str, Dict[str, Any]]] = {}
-    all_fields = {"mesh_variant", "runner", "tracking_dataset", "summary_path", "output_dir"}
+    results_by_variant: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
+    all_fields = {
+        "mesh_variant",
+        "runner",
+        "depth_variant",
+        "depth_dir",
+        "tracking_dataset",
+        "summary_path",
+        "output_dir",
+    }
     for variant in MESH_VARIANTS:
-        results_by_variant[variant] = {}
+        results_by_variant[variant] = {runner: {} for runner in FOUNDATIONPOSE_RUNNERS}
+        if tracking_dataset_root is not None:
+            depth_inputs = tracking_depth_inputs(tracking_dataset_root, args)
+        else:
+            depth_inputs = (
+                (
+                    args.foundationpose_depth_source,
+                    depth_dir_for_foundationpose(
+                        layout,
+                        method=method,
+                        variant=variant,
+                        source=args.foundationpose_depth_source,
+                    ),
+                ),
+            )
         for runner in FOUNDATIONPOSE_RUNNERS:
-            output_dir = layout.foundationpose_output_root / variant / runner
-            summary_path = foundationpose_summary_path(output_dir, runner)
-            if not summary_path.is_file():
-                continue
-            try:
-                summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                continue
-            row: Dict[str, Any] = {
-                "mesh_variant": variant,
-                "runner": runner,
-                "tracking_dataset": str(tracking_dataset_root) if tracking_dataset_root else "",
-                "summary_path": str(summary_path),
-                "output_dir": str(output_dir),
-            }
-            flatten_json("", summary, row)
-            all_fields.update(row.keys())
-            rows.append(row)
-            results_by_variant[variant][runner] = row
+            for depth_variant, depth_dir in depth_inputs:
+                output_dir = foundationpose_output_dir(layout, variant, runner, depth_variant)
+                summary_path = foundationpose_summary_path(output_dir, runner)
+                if not summary_path.is_file():
+                    continue
+                try:
+                    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    continue
+                row: Dict[str, Any] = {
+                    "mesh_variant": variant,
+                    "runner": runner,
+                    "depth_variant": depth_variant,
+                    "depth_dir": str(depth_dir),
+                    "tracking_dataset": str(tracking_dataset_root) if tracking_dataset_root else "",
+                    "summary_path": str(summary_path),
+                    "output_dir": str(output_dir),
+                }
+                flatten_json("", summary, row)
+                all_fields.update(row.keys())
+                rows.append(row)
+                results_by_variant[variant][runner][depth_variant] = row
 
     if not rows:
         return None
@@ -1457,6 +2154,8 @@ def write_foundationpose_summary(
     preferred = [
         "mesh_variant",
         "runner",
+        "depth_variant",
+        "depth_dir",
         "tracking_dataset",
         "num_frames_total",
         "num_frames_evaluated",
@@ -1504,21 +2203,35 @@ def process_dataset(
     started = time.monotonic()
     layout = build_layout(dataset_root, args)
     result = DatasetResult(dataset=str(dataset_root), output_dir=str(layout.evaluate_root))
-    status_path = layout.evaluate_root / "pipeline_status.json"
+    status_path = layout.evaluate_root / (
+        "pipeline_confidence_status.json" if args.run_confidence_reconstruction_comparison
+        else "pipeline_status.json"
+    )
     write_dataset_status(status_path, result)
 
     try:
         caminfo_path = validate_dataset(dataset_root, args)
         layout.evaluate_root.mkdir(parents=True, exist_ok=True)
 
+        if args.run_confidence_reconstruction_comparison:
+            result.depth_benchmark_status, result.main_reconstruction_status = (
+                run_confidence_reconstruction_comparison(
+                    dataset_root, caminfo_path, layout, branch_guard, args,
+                )
+            )
+            write_dataset_status(status_path, result)
+            return result
+
         tracking_dataset_root: Optional[Path] = None
-        if not args.skip_foundationpose and args.foundationpose_depth_source == "tracking_dataset":
+        needs_tracking_dataset = args.run_bundletrack or (
+            not args.skip_foundationpose and args.foundationpose_depth_source == "tracking_dataset"
+        )
+        if needs_tracking_dataset:
             tracking_dataset_root = resolve_tracking_dataset(dataset_root, args)
             validate_tracking_dataset(tracking_dataset_root, args)
             result.tracking_dataset = str(tracking_dataset_root)
             print(
-                f"[{dataset_root.name}] FoundationPose tracking dataset: "
-                f"{tracking_dataset_root}",
+                f"[{dataset_root.name}] pose tracking dataset: {tracking_dataset_root}",
                 flush=True,
             )
             write_dataset_status(status_path, result)
@@ -1566,21 +2279,39 @@ def process_dataset(
         print(f"[{dataset_root.name}] best depth method: {best_method}", flush=True)
         write_dataset_status(status_path, result)
 
-        result.gaijin_reconstruction_status = run_bundlesdf_batch(
-            dataset_root=dataset_root,
-            layout=layout,
-            branch_guard=branch_guard,
-            branch=args.bundlesdf_gaijin_branch,
-            output_root=layout.gaijin_bundle_root,
-            evaluation_root=layout.gaijin_reconstruction_eval_root,
-            methods=[best_method],
-            label="gaijin",
-            args=args,
-        )
-        write_reconstruction_comparison(layout, best_method)
+        if args.run_ratf_ablation:
+            result.gaijin_reconstruction_status = run_ratf_ablation(
+                dataset_root,
+                layout,
+                branch_guard,
+                best_method,
+                args,
+            )
+        else:
+            result.gaijin_reconstruction_status = run_bundlesdf_batch(
+                dataset_root=dataset_root,
+                layout=layout,
+                branch_guard=branch_guard,
+                branch=args.bundlesdf_gaijin_branch,
+                output_root=layout.gaijin_bundle_root,
+                evaluation_root=layout.gaijin_reconstruction_eval_root,
+                methods=[best_method],
+                label="gaijin",
+                args=args,
+            )
+            write_reconstruction_comparison(layout, best_method)
         write_dataset_status(status_path, result)
 
         result.foundationpose_status = run_foundationpose_experiments(
+            dataset_root=dataset_root,
+            tracking_dataset_root=tracking_dataset_root,
+            layout=layout,
+            method=best_method,
+            args=args,
+        )
+        write_dataset_status(status_path, result)
+
+        result.bundletrack_status = run_bundletrack_experiment(
             dataset_root=dataset_root,
             tracking_dataset_root=tracking_dataset_root,
             layout=layout,
@@ -1689,6 +2420,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--tracking_left_subdir", default="rgb")
     parser.add_argument("--tracking_depth_subdir", default="depth")
+    parser.add_argument(
+        "--tracking_filtered_depth_subdir",
+        default="depth_filter",
+        help="Confidence-filtered tracking depth directory used for the second FP depth group.",
+    )
+    parser.add_argument(
+        "--include_tracking_filtered_depth",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Include confidence-filtered tracking depth, expanding FoundationPose from 4 to 8 groups.",
+    )
     parser.add_argument("--tracking_mask_subdir", default="masks")
     parser.add_argument("--tracking_intrinsics_name", default="cam_K.txt")
     parser.add_argument(
@@ -1722,6 +2464,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gaijin_bundlesdf_dir", default="bundlesdf_gaijin")
     parser.add_argument("--main_reconstruction_eval_dir", default="reconstruction_main")
     parser.add_argument("--gaijin_reconstruction_eval_dir", default="reconstruction_gaijin")
+    parser.add_argument("--ratf_ablation_bundlesdf_dir", default="bundlesdf_ratf_ablation")
+    parser.add_argument("--ratf_ablation_eval_dir", default="reconstruction_ratf_ablation")
 
     parser.add_argument("--bundlesdf_root", type=Path, default=Path(DEFAULT_BUNDLESDF_ROOT))
     parser.add_argument("--foundationpose_root", type=Path, default=Path(DEFAULT_FOUNDATIONPOSE_ROOT))
@@ -1738,9 +2482,47 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument("--skip_depth_benchmark", action="store_true")
+    parser.add_argument(
+        "--run_confidence_reconstruction_comparison", action="store_true",
+        help="Generate FFS internal, LAF and ConfNet filtered depth, reconstruct on the main branch, and compare with existing results.",
+    )
+    parser.add_argument("--skip_laf_confidence", action="store_true", help="Omit LAF from confidence reconstruction comparisons.")
     parser.add_argument("--skip_main_reconstruction", action="store_true")
     parser.add_argument("--skip_gaijin_reconstruction", action="store_true")
     parser.add_argument("--skip_foundationpose", action="store_true")
+    parser.add_argument(
+        "--run_bundletrack",
+        action="store_true",
+        help="Run BundleTrack on raw tracking depth and evaluate it with the gaijin mesh.",
+    )
+    parser.add_argument(
+        "--bundletrack_output_dir",
+        default="",
+        help=(
+            "BundleTrack output directory. Empty uses <tracking_dataset>/evaluate/bundletrack; "
+            "relative values use the reconstruction dataset evaluate directory."
+        ),
+    )
+    parser.add_argument(
+        "--bundletrack_reference_pose_dir",
+        default="",
+        help=(
+            "Optional pose directory supplying only the first-frame mesh initialization. "
+            "Empty uses the gaijin/adaptive_filter/raw FoundationPose output."
+        ),
+    )
+    parser.add_argument("--bundletrack_stall_timeout_minutes", type=float, default=30.0)
+    parser.add_argument(
+        "--bundletrack_max_ba_frames",
+        type=int,
+        default=5,
+        help="Maximum local BundleTrack BA frames; lower values reduce LoFTR GPU memory.",
+    )
+    parser.add_argument(
+        "--run_ratf_ablation",
+        action="store_true",
+        help="Run the five reconstruction-only RATF ablation groups on the selected depth method.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--stop_on_error", action="store_true")
@@ -1761,6 +2543,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--depth_launch_file", default="offline_depth_benchmark.launch.py")
     parser.add_argument("--ros_setup", action="append", default=[], help="setup.bash to source before ros2 launch.")
     parser.add_argument("--engine_file_path", default=DEFAULT_ENGINE_FILE_PATH)
+    parser.add_argument(
+        "--confidence_engine_file_path",
+        default='["/home/hc/model/ffs/23-36-37/feature_runner_fp16_5060.engine", '
+                '"/home/hc/model/ffs/23-36-37/post_runner_with_prob_fp16_5060.engine"]',
+    )
+    parser.add_argument("--ffs_model_conf_threshold", type=float, default=0.5)
+    parser.add_argument("--laf_conf_threshold", type=float, default=0.5)
+    parser.add_argument("--laf_root", type=Path, default=Path("/home/hc/文档/LAF"))
+    parser.add_argument("--laf_conda_env", default="laf")
+    parser.add_argument("--confnet_root", type=Path, default=Path("/home/hc/文档/self-adapting-confidence"))
+    parser.add_argument("--confnet_conda_env", default="self_adapting_confidence")
+    parser.add_argument("--confnet_checkpoint", type=Path, default=Path("weights/census-sgm/model-25000"))
+    parser.add_argument("--confnet_conf_threshold", type=float, default=0.5)
     parser.add_argument("--stereo_model_type", default="FAST_FOUNDATION_STEREO")
     parser.add_argument("--input_image_width", type=int, default=1920)
     parser.add_argument("--input_image_height", type=int, default=1080)
@@ -1862,6 +2657,27 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fp_track_refine_iter", type=int, default=2)
     parser.add_argument("--fp_shorter_side", type=int, default=360)
     parser.add_argument("--fp_debug", type=int, default=0)
+    parser.add_argument(
+        "--fp_save_track_vis",
+        action="store_true",
+        help="Save FoundationPose track_vis overlays without enabling the GUI debug window.",
+    )
+    parser.add_argument(
+        "--fp_track_only",
+        action="store_true",
+        help="Run FoundationPose tracking and skip no-GT metric evaluation.",
+    )
+    parser.add_argument(
+        "--fp_failure_start_frame",
+        action="append",
+        default=[],
+        metavar="GROUP=FRAME",
+        help=(
+            "Exclude FRAME and all later frames from one FoundationPose group's metrics. "
+            "GROUP is main:standard, main:adaptive_filter, gaijin:standard, or "
+            "gaijin:adaptive_filter. Repeat for multiple groups."
+        ),
+    )
     parser.add_argument("--fp_fps", type=float, default=30.0)
     parser.add_argument("--fp_q_pos", type=float, default=1e-4)
     parser.add_argument("--fp_q_rot", type=float, default=1e-4)
@@ -1883,7 +2699,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def normalize_args(args: argparse.Namespace) -> argparse.Namespace:
     args.bundlesdf_root = args.bundlesdf_root.expanduser().resolve()
     args.foundationpose_root = args.foundationpose_root.expanduser().resolve()
+    args.laf_root = args.laf_root.expanduser().resolve()
+    args.confnet_root = args.confnet_root.expanduser().resolve()
+    args.confnet_checkpoint = resolve_under(args.confnet_root, args.confnet_checkpoint)
     args.tracking_dataset_map_entries = load_tracking_dataset_map(args.tracking_dataset_map)
+    args.fp_failure_start_frame_map = parse_foundationpose_failure_starts(
+        args.fp_failure_start_frame
+    )
 
     if args.ros_setup:
         args.ros_setup_files = [expand_path(path).resolve() for path in args.ros_setup]
@@ -1900,10 +2722,28 @@ def normalize_args(args: argparse.Namespace) -> argparse.Namespace:
         raise FileNotFoundError(args.bundlesdf_root / "batch_depth_benchmark.py")
     if not (args.foundationpose_root / "evaluate_pose_tracking_no_gt.py").is_file():
         raise FileNotFoundError(args.foundationpose_root / "evaluate_pose_tracking_no_gt.py")
+    if args.run_bundletrack and not (args.bundlesdf_root / "demo_bundletrack_jrgolden.py").is_file():
+        raise FileNotFoundError(args.bundlesdf_root / "demo_bundletrack_jrgolden.py")
     if args.bundle_max_retries < 0:
         raise ValueError("--bundle_max_retries must be non-negative")
+    if args.bundletrack_max_ba_frames < 2:
+        raise ValueError("--bundletrack_max_ba_frames must be at least 2")
+    if args.run_ratf_ablation and args.skip_gaijin_reconstruction:
+        raise ValueError("--run_ratf_ablation cannot be combined with --skip_gaijin_reconstruction")
+    if args.run_ratf_ablation:
+        args.skip_foundationpose = True
     if args.depth_scale <= 0:
         raise ValueError("--depth_scale must be positive")
+    if not all(0 <= threshold <= 1 for threshold in (
+        args.ffs_model_conf_threshold, args.laf_conf_threshold, args.confnet_conf_threshold,
+    )):
+        raise ValueError("Confidence thresholds must be in [0, 1]")
+    if args.run_confidence_reconstruction_comparison and not args.skip_laf_confidence and not (
+        args.laf_root / "saved_models/LAFNet_CVPR2019_networks.pth"
+    ).is_file():
+        raise FileNotFoundError("LAF pretrained weights are missing")
+    if args.run_confidence_reconstruction_comparison and not args.confnet_checkpoint.with_suffix(".index").is_file():
+        raise FileNotFoundError(f"ConfNet checkpoint is missing: {args.confnet_checkpoint}")
     return args
 
 
@@ -1939,7 +2779,13 @@ def main() -> int:
         if results:
             write_batch_status(batch_status_path, results)
 
-    failed = [result for result in results if result.message or result.foundationpose_status == "failed"]
+    failed = [
+        result
+        for result in results
+        if result.message
+        or result.foundationpose_status == "failed"
+        or result.bundletrack_status == "failed"
+    ]
     print(f"\nBatch status: {batch_status_path}")
     if failed:
         print(f"Completed with {len(failed)} failed dataset(s).")

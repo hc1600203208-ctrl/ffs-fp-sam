@@ -4,6 +4,7 @@
 #include <csignal>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -19,7 +20,6 @@
 
 #include "depth_confidence.hpp"
 #include "estimator/fast_foundation_stereo_estimator.h"
-#include "estimator/stereo_estimator.h"
 #include "stereo_calibration_utils.hpp"
 
 namespace fs = std::filesystem;
@@ -273,6 +273,45 @@ fs::path MakePngOutputPath(const fs::path& output_dir, const fs::path& input_pat
     return output_dir / (input_path.stem().string() + ".png");
 }
 
+bool SaveTopKCostNpy(const fs::path& path, const std::vector<cv::Mat>& cost,
+                     const cv::Size& output_size) {
+    if (cost.size() != 7) return false;
+    std::ofstream file(path, std::ios::binary);
+    if (!file) return false;
+
+    std::string header = "{'descr': '<f4', 'fortran_order': False, 'shape': (7, " +
+        std::to_string(output_size.height) + ", " + std::to_string(output_size.width) + "), }";
+    header.append((16 - (10 + header.size() + 1) % 16) % 16, ' ');
+    header += '\n';
+    const auto header_size = static_cast<std::uint16_t>(header.size());
+    file.write("\x93NUMPY\x01\x00", 8);
+    file.write(reinterpret_cast<const char*>(&header_size), sizeof(header_size));
+    file.write(header.data(), header.size());
+    for (const cv::Mat& channel : cost) {
+        if (channel.type() != CV_32FC1) return false;
+        cv::Mat resized;
+        cv::resize(channel, resized, output_size, 0, 0, cv::INTER_LINEAR);
+        file.write(reinterpret_cast<const char*>(resized.ptr<float>()),
+                   resized.total() * sizeof(float));
+    }
+    return file.good();
+}
+
+cv::Mat DisparityToPng(const cv::Mat& disparity) {
+    cv::Mat png(disparity.size(), CV_16UC1, cv::Scalar(0));
+    for (int y = 0; y < disparity.rows; ++y) {
+        const float* src = disparity.ptr<float>(y);
+        std::uint16_t* dst = png.ptr<std::uint16_t>(y);
+        for (int x = 0; x < disparity.cols; ++x) {
+            if (std::isfinite(src[x]) && src[x] > 0.0f) {
+                dst[x] = static_cast<std::uint16_t>(std::round(
+                    std::min(src[x] * 256.0f, 65535.0f)));
+            }
+        }
+    }
+    return png;
+}
+
 std::vector<std::string> CollectMatchedImageNames(
     const fs::path& left_dir,
     const fs::path& right_dir) {
@@ -317,6 +356,12 @@ class OfflineStereoDepthNode : public rclcpp::Node {
         this->declare_parameter("output_subdir", std::string("depth"));
         this->declare_parameter("raw_depth_subdir", std::string("depth_raw"));
         this->declare_parameter("vis_subdir", std::string("vis"));
+        this->declare_parameter("disparity_subdir", std::string("disparity"));
+        this->declare_parameter("topk_cost_subdir", std::string("topk_cost"));
+        this->declare_parameter("laf_rgb_subdir", std::string("laf_rgb"));
+        this->declare_parameter("model_confidence_subdir", std::string("ffs_confidence"));
+        this->declare_parameter("model_filtered_depth_subdir", std::string("depth_ffs_filter"));
+        this->declare_parameter("model_conf_threshold", 0.3);
         this->declare_parameter("min_depth_meters", 0.1);
         this->declare_parameter("max_depth_meters", 100.0);
         this->declare_parameter("depth_scale", 1000.0);
@@ -351,6 +396,20 @@ class OfflineStereoDepthNode : public rclcpp::Node {
         vis_dir_ = ResolveOutputDirectory(
             dataset_root_,
             this->get_parameter("vis_subdir").as_string());
+        disparity_dir_ = ResolveOutputDirectory(
+            dataset_root_, this->get_parameter("disparity_subdir").as_string());
+        topk_cost_dir_ = ResolveOutputDirectory(
+            dataset_root_, this->get_parameter("topk_cost_subdir").as_string());
+        laf_rgb_dir_ = ResolveOutputDirectory(
+            dataset_root_, this->get_parameter("laf_rgb_subdir").as_string());
+        model_confidence_dir_ = ResolveOutputDirectory(
+            dataset_root_, this->get_parameter("model_confidence_subdir").as_string());
+        model_filtered_depth_dir_ = ResolveOutputDirectory(
+            dataset_root_, this->get_parameter("model_filtered_depth_subdir").as_string());
+        model_conf_threshold_ = static_cast<float>(this->get_parameter("model_conf_threshold").as_double());
+        if (model_conf_threshold_ < 0.0f || model_conf_threshold_ > 1.0f) {
+            throw std::invalid_argument("model_conf_threshold must be within [0, 1].");
+        }
         min_depth_meters_ = static_cast<float>(this->get_parameter("min_depth_meters").as_double());
         max_depth_meters_ = static_cast<float>(this->get_parameter("max_depth_meters").as_double());
         depth_scale_ = this->get_parameter("depth_scale").as_double();
@@ -388,6 +447,9 @@ class OfflineStereoDepthNode : public rclcpp::Node {
                     engine_file_path[1],
                     model_input_height_,
                     model_input_width_);
+                if (!estimator_->hasModelConfidence()) {
+                    throw std::runtime_error("Post engine must expose 'prob'; use post_runner_with_prob engine.");
+                }
                 break;
             default:
                 throw std::runtime_error("Unsupported offline stereo model type: " + model_type);
@@ -498,7 +560,12 @@ class OfflineStereoDepthNode : public rclcpp::Node {
         const fs::path& right_path,
         const fs::path& raw_depth_output_path,
         const fs::path& output_path,
-        const fs::path& vis_output_path) {
+        const fs::path& vis_output_path,
+        const fs::path& disparity_output_path,
+        const fs::path& topk_cost_output_path,
+        const fs::path& laf_rgb_output_path,
+        const fs::path& model_confidence_output_path,
+        const fs::path& model_filtered_depth_output_path) {
         const cv::Mat left_image = cv::imread(left_path.string(), cv::IMREAD_COLOR);
         const cv::Mat right_image = cv::imread(right_path.string(), cv::IMREAD_COLOR);
 
@@ -526,7 +593,14 @@ class OfflineStereoDepthNode : public rclcpp::Node {
         const auto start = std::chrono::high_resolution_clock::now();
 
         cv::Mat disparity;
-        estimator_->inference(prepared_left_image, prepared_right_image, disparity);
+        std::vector<cv::Mat> topk_cost;
+        cv::Mat model_confidence_quarter;
+        if (!estimator_->inference(
+                prepared_left_image, prepared_right_image, disparity,
+                &topk_cost, &model_confidence_quarter)) {
+            RCLCPP_ERROR(this->get_logger(), "Stereo inference failed for %s", left_path.c_str());
+            return false;
+        }
 
         const auto end = std::chrono::high_resolution_clock::now();
         const auto duration_ms =
@@ -550,6 +624,10 @@ class OfflineStereoDepthNode : public rclcpp::Node {
             static_cast<float>(baseline_meters),
             min_depth_meters_,
             max_depth_meters_);
+        cv::Mat model_confidence;
+        cv::resize(model_confidence_quarter, model_confidence, disparity.size(),
+                   0, 0, cv::INTER_LINEAR);
+        model_confidence.setTo(0.0f, depth_meters <= 0.0f);
         const cv::Mat raw_depth_rectified_full = RestoreToRectifiedResolution(
             depth_meters,
             prepared_left,
@@ -558,6 +636,21 @@ class OfflineStereoDepthNode : public rclcpp::Node {
         if (raw_depth_rectified_full.empty()) {
             RCLCPP_ERROR(this->get_logger(), "Failed to restore raw depth to rectified resolution.");
             return false;
+        }
+
+        cv::Mat model_confidence_to_save = RestoreToRectifiedResolution(
+            model_confidence, prepared_left, left_image.size(), cv::INTER_LINEAR);
+        if (model_confidence_to_save.empty()) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to restore FFS confidence output.");
+            return false;
+        }
+        if (save_input_resolution_) {
+            model_confidence_to_save = AlignRectifiedDepthToOriginalLeft(
+                model_confidence_to_save, rectification_maps_, cv::INTER_LINEAR);
+            if (model_confidence_to_save.empty()) {
+                RCLCPP_ERROR(this->get_logger(), "Failed to align FFS confidence output.");
+                return false;
+            }
         }
 
         cv::Mat raw_depth_to_save = raw_depth_rectified_full;
@@ -571,6 +664,12 @@ class OfflineStereoDepthNode : public rclcpp::Node {
                 return false;
             }
         }
+        model_confidence_to_save.setTo(0.0f, raw_depth_to_save <= 0.0f);
+        cv::Mat model_confidence_u16;
+        model_confidence_to_save.convertTo(model_confidence_u16, CV_16UC1, 65535.0);
+        cv::Mat model_filtered_depth_to_save = raw_depth_to_save.clone();
+        model_filtered_depth_to_save.setTo(
+            0.0f, model_confidence_u16 < std::ceil(model_conf_threshold_ * 65535.0f));
         const cv::Mat confidence_map = depth_confidence::compute_confidence_map(
             prepared_left_image,
             prepared_right_image,
@@ -634,6 +733,18 @@ class OfflineStereoDepthNode : public rclcpp::Node {
             RCLCPP_ERROR(this->get_logger(), "Failed to save depth visualization: %s", vis_output_path.c_str());
             return false;
         }
+        if (!cv::imwrite(disparity_output_path.string(), DisparityToPng(disparity)) ||
+            !SaveTopKCostNpy(topk_cost_output_path, topk_cost, disparity.size()) ||
+            !cv::imwrite(laf_rgb_output_path.string(), prepared_left_image)) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to save LAF inputs for %s", left_path.c_str());
+            return false;
+        }
+        if (!cv::imwrite(model_confidence_output_path.string(), model_confidence_u16) ||
+            !cv::imwrite(model_filtered_depth_output_path.string(),
+                         ConvertDepthMetersToUint16Millimeters(model_filtered_depth_to_save, depth_scale_))) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to save FFS confidence output for %s", left_path.c_str());
+            return false;
+        }
 
         RCLCPP_INFO(
             this->get_logger(),
@@ -653,6 +764,11 @@ class OfflineStereoDepthNode : public rclcpp::Node {
             fs::create_directories(output_dir_);
             fs::create_directories(raw_depth_dir_);
             fs::create_directories(vis_dir_);
+            fs::create_directories(disparity_dir_);
+            fs::create_directories(topk_cost_dir_);
+            fs::create_directories(laf_rgb_dir_);
+            fs::create_directories(model_confidence_dir_);
+            fs::create_directories(model_filtered_depth_dir_);
             const std::vector<std::string> filenames = CollectMatchedImageNames(left_dir_, right_dir_);
             if (filenames.empty()) {
                 throw std::runtime_error(
@@ -675,13 +791,26 @@ class OfflineStereoDepthNode : public rclcpp::Node {
                 const fs::path raw_depth_output_path = MakePngOutputPath(raw_depth_dir_, left_path);
                 const fs::path output_path = MakePngOutputPath(output_dir_, left_path);
                 const fs::path vis_output_path = MakePngOutputPath(vis_dir_, left_path);
+                const fs::path disparity_output_path = MakePngOutputPath(disparity_dir_, left_path);
+                const fs::path topk_cost_output_path =
+                    topk_cost_dir_ / (left_path.stem().string() + ".npy");
+                const fs::path laf_rgb_output_path = MakePngOutputPath(laf_rgb_dir_, left_path);
+                const fs::path model_confidence_output_path =
+                    MakePngOutputPath(model_confidence_dir_, left_path);
+                const fs::path model_filtered_depth_output_path =
+                    MakePngOutputPath(model_filtered_depth_dir_, left_path);
 
                 if (processSinglePair(
                         left_path,
                         right_path,
                         raw_depth_output_path,
                         output_path,
-                        vis_output_path)) {
+                        vis_output_path,
+                        disparity_output_path,
+                        topk_cost_output_path,
+                        laf_rgb_output_path,
+                        model_confidence_output_path,
+                        model_filtered_depth_output_path)) {
                     ++success_count;
                 }
             }
@@ -710,17 +839,23 @@ class OfflineStereoDepthNode : public rclcpp::Node {
     fs::path output_dir_;
     fs::path raw_depth_dir_;
     fs::path vis_dir_;
+    fs::path disparity_dir_;
+    fs::path topk_cost_dir_;
+    fs::path laf_rgb_dir_;
+    fs::path model_confidence_dir_;
+    fs::path model_filtered_depth_dir_;
 
     float min_depth_meters_ = 0.1f;
     float max_depth_meters_ = 100.0f;
     double depth_scale_ = 1000.0;
     bool save_input_resolution_ = true;
+    float model_conf_threshold_ = 0.3f;
 
     StereoCalibration calibration_;
     StereoRectificationMaps rectification_maps_;
     bool rectification_ready_ = false;
 
-    std::unique_ptr<StereoEstimator> estimator_;
+    std::unique_ptr<FastFoundationStereoEstimator> estimator_;
     rclcpp::TimerBase::SharedPtr run_timer_;
     depth_confidence::ConfidenceParameters confidence_params_;
     cv::Mat previous_depth_;

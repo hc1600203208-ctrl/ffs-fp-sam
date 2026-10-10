@@ -1,9 +1,12 @@
 #include "gwc_volume_kernel.h"
 
 #include <cstdlib>
+#include <cfloat>
 #include <cstring>
 
 #include <cuda_runtime.h>
+
+#include "cuda_utils.h"
 
 
 __global__ void preprocess_rgb_to_planar_kernel(
@@ -198,4 +201,48 @@ void LaunchGwcVolumeKernel(
         //printf("CUDA kernel launch error: %s\n", cudaGetErrorString(err));
         return;
     }
+}
+
+__global__ void topk_cost_kernel(
+    const half* volume, float* topk, int height, int width, int disparities,
+    int groups, bool reverse_shift)
+{
+    const int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+    const int area = height * width;
+    if (pixel >= area) return;
+
+    const int x = pixel % width;
+    float best[7];
+    for (int k = 0; k < 7; ++k) best[k] = FLT_MAX;
+    for (int d = 0; d < disparities; ++d) {
+        if (reverse_shift ? x + d >= width : d > x) continue;
+        float similarity = 0.0f;
+        for (int g = 0; g < groups; ++g) {
+            similarity += __half2float(volume[((g * disparities + d) * area) + pixel]);
+        }
+        const float cost = -similarity / groups;
+        if (!isfinite(cost)) continue;
+        for (int k = 0; k < 7; ++k) {
+            if (cost < best[k]) {
+                for (int j = 6; j > k; --j) best[j] = best[j - 1];
+                best[k] = cost;
+                break;
+            }
+        }
+    }
+    if (best[0] == FLT_MAX) best[0] = 0.0f;
+    for (int k = 0; k < 7; ++k) {
+        topk[k * area + pixel] = best[k] == FLT_MAX ? best[k - 1] : best[k];
+        if (best[k] == FLT_MAX) best[k] = best[k - 1];
+    }
+}
+
+void LaunchTopKCostKernel(
+    const half* d_cost_volume, float* d_topk_cost, int height, int width,
+    int disparities, int groups, bool reverse_shift, cudaStream_t stream)
+{
+    const int area = height * width;
+    topk_cost_kernel<<<(area + 255) / 256, 256, 0, stream>>>(
+        d_cost_volume, d_topk_cost, height, width, disparities, groups, reverse_shift);
+    CHECK_CUDA(cudaGetLastError());
 }

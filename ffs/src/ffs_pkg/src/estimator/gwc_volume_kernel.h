@@ -15,6 +15,13 @@ void LaunchGwcVolumeKernel(
     bool reverse_shift,
     cudaStream_t stream);
 
+void LaunchTopKCostKernel(
+    const half* d_cost_volume,
+    float* d_topk_cost,
+    int height, int width, int disparities, int groups,
+    bool reverse_shift,
+    cudaStream_t stream);
+
 
 void convertFloatToHalf(
     const float* d_floatData,

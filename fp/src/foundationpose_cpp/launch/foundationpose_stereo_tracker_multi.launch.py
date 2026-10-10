@@ -62,7 +62,7 @@ def generate_launch_description():
             "params_file",
             default_value=(
                 "/home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/config/"
-                "foundationpose_stereo_tracker_multi_bluepink_example.yaml"
+                "foundationpose_stereo_tracker_multi_bluegold_example.yaml"
             ),
             description="Shared parameters for multi-object masks and FoundationPose tracking.",
         ),
@@ -80,7 +80,7 @@ def generate_launch_description():
         DeclareLaunchArgument("box_threshold", default_value="0.3"),
         DeclareLaunchArgument(
             "enable_profiling",
-            default_value="true",
+            default_value="false",
             description="Enable per-frame timing statistics for the multi-object tracker.",
         ),
         DeclareLaunchArgument(

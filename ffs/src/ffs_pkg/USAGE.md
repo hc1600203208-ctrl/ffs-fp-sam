@@ -70,6 +70,57 @@ ros2 launch fast_foundation_stereo dnn_stereo_depth.launch.py \
 ```
 ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py
 
+The offline launch also writes matching LAF inputs under `dataset_root`:
+`laf_rgb/<frame>.png` (rectified model-size left image),
+`disparity/<frame>.png` (16-bit disparity in pixels times 256), and
+`topk_cost/<frame>.npy` (`float32`, shape `[7, model_height, model_width]`).
+Top-K cost is the seven smallest negative mean group-wise correlations from
+the FFS quarter-resolution volume, resized to model resolution. Channels are
+ordered best to seventh best. These are raw FFS costs, not the MC-CNN costs
+used to train the released LAF weights; use the seven-channel cost feature
+branch directly and retrain or calibrate LAF for FFS data.
+In `models.py`, replace the two cost preprocessing lines (`L2normalize`/`softmax`
+and `torch.topk`) with `x = cost` when loading this seven-channel NPY.
+Read disparity as `png.astype(np.float32) / 256.0`; LAF additionally divides
+pixel disparity by 228 before its disparity branch.
+
+```bash
+python3 -c 'import cv2, numpy as np, sys; p=sys.argv[1]; d=cv2.imread(p+"/disparity/0001.png",-1); r=cv2.imread(p+"/laf_rgb/0001.png"); c=np.load(p+"/topk_cost/0001.npy"); assert d.dtype==np.uint16 and c.dtype==np.float32 and c.shape==(7,*d.shape) and r.shape[:2]==d.shape and np.isfinite(c).all() and (c[:-1]<=c[1:]+1e-6).all(); print("disparity px", d.max()/256, "cost", c.shape)' /home/hc/dataset/myobject/blue_fast/laf_export
+```
+
+## FFS internal matching confidence
+
+The original post-runner engine exposes only `disp`. The offline launch uses
+`post_runner_with_prob_fp16_5060.engine`, whose second output is the model's
+softmax probability volume (`prob`, `[1,48,112,160]` at 448x640 input).
+`ffs_confidence/<frame>.png` is the maximum probability across disparity bins,
+upsampled and aligned with the saved depth (`uint16 / 65535` gives `[0,1]`).
+`depth_ffs_filter/<frame>.png` retains raw depth where this score is at least
+`model_conf_threshold` (default `0.3`). This score describes the initial
+matching distribution before FFS's iterative disparity refinement; it is not
+a calibrated probability that the final depth is correct.
+The external-filter result in `depth_filter` is independent of this output.
+
+```bash
+source /home/hc/weizi/ffs+fp+sam/ffs/install/setup.bash
+ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
+  dataset_root:=/home/hc/dataset/myobject/blue_fast \
+  caminfo_path:=/home/hc/weizi/ffs+fp+sam/ffs/jr714.txt \
+  model_conf_threshold:=0.3
+```
+
+To rebuild the prob-enabled engine from an existing post-runner ONNX:
+
+```bash
+/home/hc/anaconda3/envs/ffs/bin/python /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/expose_ffs_prob.py \
+  /home/hc/model/ffs/23-36-37/post_runner.onnx \
+  /home/hc/model/ffs/23-36-37/post_runner_with_prob.onnx
+/usr/src/tensorrt/bin/trtexec \
+  --onnx=/home/hc/model/ffs/23-36-37/post_runner_with_prob.onnx \
+  --saveEngine=/home/hc/model/ffs/23-36-37/post_runner_with_prob_fp16_5060.engine \
+  --fp16 --useCudaGraph --skipInference
+```
+
 ## Depth Inspector
 
 Use the standalone depth inspection tool to visually compare RGB and saved depth results frame by frame.

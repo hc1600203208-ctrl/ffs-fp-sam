@@ -3,16 +3,17 @@ source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
 source /home/hc/weizi/ffs+fp+sam/sam/ros2_install/setup.bash
 ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
 ros2 launch foundationpose_cpp foundationpose_stereo_tracker_fast.launch.py
-
+colcon build --packages-select foundationpose_cpp  --cmake-args -DENABLE_TENSORRT=ON -DBUILD_SIMPLE_TESTS=ON
+cd /home/hc/weizi/fp/build/foundationpose_cpp/bin
 # ffs使用说明
 
 ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
-dataset_root:=/home/hc/dataset/myobject/oxi_fast_all \
+dataset_root:=/home/hc/dataset/myobject/blue_fast \
 caminfo_path:=/home/hc/weizi/ffs+fp+sam/ffs/jr714.txt
 
 ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
-dataset_root:=/home/hc/dataset/myobject/weixing1 \
-caminfo_path:=/home/hc/weizi/ffs+fp+sam/ffs/128091.txt
+dataset_root:=/home/hc/dataset/myobject/60+120/60/jiaodu+xyz \
+caminfo_path:=/home/hc/weizi/ffs+fp+sam/ffs/64091.txt
 # 进行深度图和rgb图对应可视化
 python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/depth_inspector.py --rgb-dir /home/hc/dataset/myobject/weixing1/rgb --depth-dir /home/hc/dataset/myobject/weixing1/depth
 # 进行极限校正可视化结果
@@ -20,7 +21,7 @@ python /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_stereo_rectificat
 
 # 生成extents.txt
 
-python /home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/tools/export_trimesh_oriented_bounds.py /home/hc/dataset/myobject/weixing1/bundlesdf720/textured_mesh.obj
+python /home/hc/weizi/ffs+fp+sam/fp/src/foundationpose_cpp/tools/export_trimesh_oriented_bounds.py /home/hc/dataset/myobject/fluke_2/evaluate/bundlesdf_gaijin/confidence_photo_only/textured_mesh.obj
 
 # bundlesdf 简化命令
 source ~/anaconda3/bin/activate
@@ -57,8 +58,17 @@ source /opt/ros/jazzy/setup.bash
 source /home/hc/weizi/ffs+fp+sam/sim/install/setup.bash
 ros2 launch sim_stereo_cpp stereo_render_cpp.launch.py
 
+# app运行命令
+source /opt/ros/jazzy/setup.bash
+source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
+source /home/hc/weizi/ffs+fp+sam/sim/install/setup.bash
+python3 /home/hc/weizi/ffs+fp+sam/app/sim_stereo_app.py
 
-
+source /opt/ros/jazzy/setup.bash
+source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
+source /home/hc/weizi/ffs+fp+sam/sam/ros2_install/setup.bash
+ros2 bag play ~/bag/bluepink -l
+python3 /home/hc/weizi/ffs+fp+sam/app/foundationpose_app.py
 # 运行批量评估脚本命令
 python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/lgj   --tracking_dataset_root /home/hc/dataset/myobject/lgj --bundle_shorter_side 720
 
@@ -72,6 +82,10 @@ python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.p
 python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/oxi   --tracking_dataset_root /home/hc/dataset/myobject/oxi --bundle_shorter_side 720 --fp_fps 12  --fp_render_mode faces 
 
 python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/dataset/myobject/oxi  --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction  --foundationpose_depth_source tracking_dataset   --overwrite --tracking_dataset_root /home/hc/dataset/myobject/oxi_fast  --fp_fps 20  --fp_render_mode faces  --allow_dirty_bundlesdf
+
+python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/weizi/dataset/jrnew-blue  --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction  --foundationpose_depth_source tracking_dataset   --overwrite --tracking_dataset_root /home/hc/dataset/myobject/blue_fast  --fp_fps 12  --fp_render_mode faces  --allow_dirty_bundlesdf
+
+python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py    /home/hc/weizi/dataset/jrnew-blue    --foundationpose_depth_source tracking_dataset   --overwrite --tracking_dataset_root /home/hc/dataset/myobject/blue_fast  --fp_fps 12  --fp_render_mode faces  --allow_dirty_bundlesdf
 
  python3 /home/hc/weizi/ffs+fp+sam/ffs/src/ffs_pkg/scripts/batch_evaluate_stack.py   /home/hc/dataset/myobject/lgj   --skip_depth_benchmark   --skip_main_reconstruction   --skip_gaijin_reconstruction   --tracking_dataset_root /home/hc/dataset/myobject/lgj_fast --foundationpose_depth_source tracking_dataset   --overwrite  --fp_fps 20  --fp_render_mode faces --fp_q_omega 3e-2 
 

@@ -275,6 +275,17 @@ void FastFoundationStereoEstimator::loadEngine(const std::string& featureEngineP
     if (HasDynamicDim(dispDims)) {
         throw std::runtime_error("Output tensor disp still has unresolved dimensions: " + DimsToString(dispDims));
     }
+    if (HasIOTensor(m_post_engine, "prob")) {
+        const auto probDims = m_post_context->getTensorShape("prob");
+        if (probDims.nbDims != 4 || probDims.d[0] != 1 ||
+            probDims.d[1] != m_maxDispQuarter || probDims.d[2] != m_featureH4 ||
+            probDims.d[3] != m_featureW4 ||
+            m_post_engine->getTensorDataType("prob") != nvinfer1::DataType::kFLOAT) {
+            throw std::runtime_error("Expected float32 prob tensor [1,D,H/4,W/4], got " +
+                                     DimsToString(probDims));
+        }
+        m_probDisparities = probDims.d[1];
+    }
 
     RCLCPP_INFO(
         rclcpp::get_logger("FastFoundationStereoEstimator"),
@@ -298,6 +309,10 @@ void FastFoundationStereoEstimator::allocateBuffers() {
     const auto dispDims = m_post_context->getTensorShape("disp");
     const size_t dispElements = NumElements(dispDims);
     m_dDisp  = std::make_unique<DeviceBuffer>(dispElements * sizeof(float));
+    if (m_probDisparities > 0) {
+        m_hProb.resize(static_cast<size_t>(m_probDisparities) * m_featureH4 * m_featureW4);
+        m_dProb = std::make_unique<DeviceBuffer>(m_hProb.size() * sizeof(float));
+    }
 
     m_dRawRGBLeft = std::make_unique<DeviceBuffer>(static_cast<size_t>(m_inputH) * m_inputW * 3 * sizeof(uint8_t));
     m_dRawRGBRight = std::make_unique<DeviceBuffer>(static_cast<size_t>(m_inputH) * m_inputW * 3 * sizeof(uint8_t));
@@ -334,6 +349,9 @@ void FastFoundationStereoEstimator::allocateBuffers() {
     checkTrtCall(m_post_context->setTensorAddress("stem_2x", m_dStem2x->ptr), "setTensorAddress(post:stem_2x)");
     checkTrtCall(m_post_context->setTensorAddress("gwc_volume", m_dGwcVolume->ptr), "setTensorAddress(post:gwc_volume)");
     checkTrtCall(m_post_context->setTensorAddress("disp", m_dDisp->ptr), "setTensorAddress(post:disp)");
+    if (m_dProb) {
+        checkTrtCall(m_post_context->setTensorAddress("prob", m_dProb->ptr), "setTensorAddress(post:prob)");
+    }
 }
 
 /*
@@ -371,7 +389,21 @@ void FastFoundationStereoEstimator::printIOTensors() {
     printEngineTensors(m_post_engine, "Post");
 }
 
-bool FastFoundationStereoEstimator::inference(const cv::Mat& leftRaw, const cv::Mat& rightRaw, cv::Mat& outputDisp) {    
+bool FastFoundationStereoEstimator::inference(const cv::Mat& leftRaw, const cv::Mat& rightRaw, cv::Mat& outputDisp) {
+    return inference(leftRaw, rightRaw, outputDisp, nullptr, nullptr);
+}
+
+bool FastFoundationStereoEstimator::inference(const cv::Mat& leftRaw, const cv::Mat& rightRaw,
+                                               cv::Mat& outputDisp, std::vector<cv::Mat>* topk_cost) {
+    return inference(leftRaw, rightRaw, outputDisp, topk_cost, nullptr);
+}
+
+bool FastFoundationStereoEstimator::inference(const cv::Mat& leftRaw, const cv::Mat& rightRaw,
+                                               cv::Mat& outputDisp, std::vector<cv::Mat>* topk_cost,
+                                               cv::Mat* model_confidence) {
+    if (model_confidence != nullptr && !m_dProb) {
+        throw std::runtime_error("Post engine has no 'prob' output; build post_runner_with_prob.engine.");
+    }
     if (leftRaw.rows != m_inputH || leftRaw.cols != m_inputW) {
         std::cerr << "Check left_image shape failed! shape: " << leftRaw.rows << "x" << leftRaw.cols << std::endl;
         return false;
@@ -385,14 +417,16 @@ bool FastFoundationStereoEstimator::inference(const cv::Mat& leftRaw, const cv::
     cv::Mat leftImg = m_padder->pad(leftRaw);
     cv::Mat rightImg = m_padder->pad(rightRaw);
 
-    bool ret = infer(leftImg, rightImg, outputDisp);
+    bool ret = infer(leftImg, rightImg, outputDisp, topk_cost, model_confidence);
 
-    outputDisp = m_padder->unpad(outputDisp);
+    if (ret) outputDisp = m_padder->unpad(outputDisp);
 
     return ret;
 }
 
-bool FastFoundationStereoEstimator::infer(const cv::Mat& leftImg, const cv::Mat& rightImg, cv::Mat& outputDisp) {
+bool FastFoundationStereoEstimator::infer(const cv::Mat& leftImg, const cv::Mat& rightImg,
+                                          cv::Mat& outputDisp, std::vector<cv::Mat>* topk_cost,
+                                          cv::Mat* model_confidence) {
     if (leftImg.empty() || rightImg.empty()) {
         std::cerr << "Input images are empty!" << std::endl;
         return false;
@@ -450,6 +484,16 @@ bool FastFoundationStereoEstimator::infer(const cv::Mat& leftImg, const cv::Mat&
         B, C, H, W, m_maxDispQuarter, m_gwcGroups, gwc_normalize, reverse_gwc_shift, m_stream
     );
 
+    if (topk_cost != nullptr) {
+        const size_t count = static_cast<size_t>(7) * H * W;
+        if (!m_dTopKCost) {
+            m_dTopKCost = std::make_unique<DeviceBuffer>(count * sizeof(float));
+            m_hTopKCost.resize(count);
+        }
+        LaunchTopKCostKernel(m_dGwcVolume->as<half>(), m_dTopKCost->as<float>(),
+                             H, W, m_maxDispQuarter, m_gwcGroups, reverse_gwc_shift, m_stream);
+    }
+
     // 5. Post Processing Inference
     if (!m_post_context->enqueueV3(m_stream)) {
         std::cerr << "TensorRT execution failed!" << std::endl;
@@ -458,9 +502,38 @@ bool FastFoundationStereoEstimator::infer(const cv::Mat& leftImg, const cv::Mat&
 
     // 6. Copy results to CPU
     CHECK_CUDA(cudaMemcpyAsync(m_hDisp.data(), m_dDisp->ptr, m_dDisp->size, cudaMemcpyDeviceToHost, m_stream));
+    if (topk_cost != nullptr) {
+        CHECK_CUDA(cudaMemcpyAsync(m_hTopKCost.data(), m_dTopKCost->ptr, m_dTopKCost->size,
+                                   cudaMemcpyDeviceToHost, m_stream));
+    }
+    if (model_confidence != nullptr) {
+        CHECK_CUDA(cudaMemcpyAsync(m_hProb.data(), m_dProb->ptr, m_dProb->size,
+                                   cudaMemcpyDeviceToHost, m_stream));
+    }
     CHECK_CUDA(cudaStreamSynchronize(m_stream));
     
     cv::Mat(m_inputH, m_inputW, CV_32FC1, m_hDisp.data()).copyTo(outputDisp);
+
+    if (topk_cost != nullptr) {
+        topk_cost->clear();
+        const size_t area = static_cast<size_t>(H) * W;
+        for (int k = 0; k < 7; ++k) {
+            topk_cost->push_back(cv::Mat(H, W, CV_32FC1,
+                m_hTopKCost.data() + k * area).clone());
+        }
+    }
+    if (model_confidence != nullptr) {
+        *model_confidence = cv::Mat(m_featureH4, m_featureW4, CV_32FC1);
+        const size_t area = static_cast<size_t>(m_featureH4) * m_featureW4;
+        for (size_t pixel = 0; pixel < area; ++pixel) {
+            float peak = 0.0f;
+            for (int d = 0; d < m_probDisparities; ++d) {
+                const float value = m_hProb[static_cast<size_t>(d) * area + pixel];
+                if (std::isfinite(value)) peak = std::max(peak, value);
+            }
+            model_confidence->ptr<float>()[pixel] = std::clamp(peak, 0.0f, 1.0f);
+        }
+    }
 
     return true;
 }
