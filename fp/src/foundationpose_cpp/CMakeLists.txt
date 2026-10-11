@@ -117,19 +117,7 @@ if(BUILD_ROS2_NODE)
     rclcpp
   )
 
-  add_executable(foundationpose_tracker_node
-    src/foundationpose_ros2_node.cpp
-  )
-
-  add_executable(foundationpose_file_mask_tracker_node
-    src/foundationpose_file_mask_ros2_node.cpp
-  )
-
-  add_executable(foundationpose_stereo_tracker_node
-    src/foundationpose_stereo_tracker_node.cpp
-    src/adaptive_se3_pose_filter.cpp
-    src/se3_utils.cpp
-  )
+ 
 
   add_executable(foundationpose_stereo_tracker_fast_node
     src/foundationpose_stereo_tracker_fast_node.cpp
@@ -139,38 +127,9 @@ if(BUILD_ROS2_NODE)
     src/foundationpose_stereo_tracker_multi_node.cpp
   )
 
-  add_executable(rgbd_sequence_publisher_node
-    src/rgbd_sequence_publisher_node.cpp
-  )
 
-  add_executable(foundationpose_offline_rgbd_node
-    src/foundationpose_offline_rgbd_node.cpp
-    src/adaptive_se3_pose_filter.cpp
-    src/se3_utils.cpp
-  )
 
-  add_executable(foundationpose_offline_rgbd_no_filter_node
-    src/foundationpose_offline_rgbd_no_filter_node.cpp
-  )
 
-  target_link_libraries(foundationpose_tracker_node
-    detection_6d_foundationpose
-    trt_core
-    ${OpenCV_LIBS}
-  )
-
-  target_link_libraries(foundationpose_file_mask_tracker_node
-    detection_6d_foundationpose
-    trt_core
-    ${OpenCV_LIBS}
-  )
-
-  target_link_libraries(foundationpose_stereo_tracker_node
-    detection_6d_foundationpose
-    trt_core
-    fast_foundation_stereo_embedded
-    ${OpenCV_LIBS}
-  )
 
   target_link_libraries(foundationpose_stereo_tracker_fast_node
     detection_6d_foundationpose
@@ -186,43 +145,10 @@ if(BUILD_ROS2_NODE)
     ${OpenCV_LIBS}
   )
 
-  target_link_libraries(rgbd_sequence_publisher_node
-    ${OpenCV_LIBS}
-  )
+  
 
-  target_link_libraries(foundationpose_offline_rgbd_node
-    detection_6d_foundationpose
-    trt_core
-    ${OpenCV_LIBS}
-  )
 
-  target_link_libraries(foundationpose_offline_rgbd_no_filter_node
-    detection_6d_foundationpose
-    trt_core
-    ${OpenCV_LIBS}
-  )
 
-  target_include_directories(foundationpose_tracker_node PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
-    ${OpenCV_INCLUDE_DIRS}
-  )
-
-  target_include_directories(foundationpose_file_mask_tracker_node PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
-    ${OpenCV_INCLUDE_DIRS}
-  )
-
-  target_include_directories(foundationpose_stereo_tracker_node PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
-    ${FAST_FOUNDATION_STEREO_SOURCE_DIR}/src
-    ${FAST_FOUNDATION_STEREO_SOURCE_DIR}/src/estimator
-    ${OpenCV_INCLUDE_DIRS}
-    ${CUDA_INCLUDE_DIRS}
-    ${TENSORRT_INCLUDE_DIR}
-  )
 
   target_include_directories(foundationpose_stereo_tracker_fast_node PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
@@ -244,51 +170,8 @@ if(BUILD_ROS2_NODE)
     ${TENSORRT_INCLUDE_DIR}
   )
 
-  target_include_directories(rgbd_sequence_publisher_node PRIVATE
-    ${OpenCV_INCLUDE_DIRS}
-  )
 
-  target_include_directories(foundationpose_offline_rgbd_node PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
-    ${OpenCV_INCLUDE_DIRS}
-  )
 
-  target_include_directories(foundationpose_offline_rgbd_no_filter_node PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/detection_6d_foundationpose/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/easy_deploy_tool/inference_core/trt_core/include
-    ${OpenCV_INCLUDE_DIRS}
-  )
-
-  ament_target_dependencies(foundationpose_tracker_node
-    rclcpp
-    sensor_msgs
-    geometry_msgs
-    std_msgs
-    cv_bridge
-    message_filters
-    tf2
-  )
-
-  ament_target_dependencies(foundationpose_file_mask_tracker_node
-    rclcpp
-    sensor_msgs
-    geometry_msgs
-    std_msgs
-    cv_bridge
-    message_filters
-    tf2
-  )
-
-  ament_target_dependencies(foundationpose_stereo_tracker_node
-    rclcpp
-    sensor_msgs
-    geometry_msgs
-    std_msgs
-    cv_bridge
-    message_filters
-    tf2
-  )
 
   ament_target_dependencies(foundationpose_stereo_tracker_fast_node
     rclcpp
@@ -310,38 +193,10 @@ if(BUILD_ROS2_NODE)
     tf2
   )
 
-  ament_target_dependencies(rgbd_sequence_publisher_node
-    rclcpp
-    sensor_msgs
-    std_msgs
-    cv_bridge
-  )
-
-  ament_target_dependencies(foundationpose_offline_rgbd_node
-    rclcpp
-    sensor_msgs
-    geometry_msgs
-    std_msgs
-    cv_bridge
-  )
-
-  ament_target_dependencies(foundationpose_offline_rgbd_no_filter_node
-    rclcpp
-    sensor_msgs
-    geometry_msgs
-    std_msgs
-    cv_bridge
-  )
-
-  install(TARGETS foundationpose_tracker_node
-                  foundationpose_file_mask_tracker_node
-                  foundationpose_stereo_tracker_node
+  install(TARGETS 
                   foundationpose_stereo_tracker_fast_node
                   foundationpose_stereo_tracker_multi_node
                   fast_foundation_stereo_embedded
-                  rgbd_sequence_publisher_node
-                  foundationpose_offline_rgbd_node
-                  foundationpose_offline_rgbd_no_filter_node
     DESTINATION lib/${PROJECT_NAME}
   )
 

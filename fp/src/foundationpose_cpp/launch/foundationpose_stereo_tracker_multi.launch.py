@@ -71,7 +71,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "first_mask_output_dir",
             default_value=(
-                "/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/"
+                "/home/hc/weizi/ffs+fp+sam/fp/masks/"
                 "first_mask_multi"
             ),
         ),

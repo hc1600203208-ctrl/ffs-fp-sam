@@ -61,7 +61,7 @@ def generate_launch_description():
         DeclareLaunchArgument("left_image_topic", default_value="/left/image_raw"),
         DeclareLaunchArgument(
             "first_mask_output_dir",
-            default_value="/home/hc/weizi/ffs+fp+sam/Grounded-Segment-Anything/ros2_outputs/first_mask",
+            default_value="/home/hc/weizi/ffs+fp+sam/fp/masks/first_mask",
         ),
         DeclareLaunchArgument("first_mask_output_name", default_value="first_mask.png"),
         DeclareLaunchArgument("mask_topic", default_value="/fisrt_mask"),

@@ -63,6 +63,7 @@ source /opt/ros/jazzy/setup.bash
 source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
 source /home/hc/weizi/ffs+fp+sam/sim/install/setup.bash
 python3 /home/hc/weizi/ffs+fp+sam/app/sim_stereo_app.py
+python3 /home/hc/weizi/ffs+fp+sam/app/sim_stereo_multi_app.py
 
 source /opt/ros/jazzy/setup.bash
 source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash

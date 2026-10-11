@@ -1,8 +1,0 @@
-"":
-  log-base: ./log
-build:
-  build-base: ./build
-  install-base: ./install
-  test-result-base: ./build
-  base-paths:
-    - src
