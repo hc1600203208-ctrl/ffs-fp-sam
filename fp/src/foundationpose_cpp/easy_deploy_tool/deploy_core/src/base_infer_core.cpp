@@ -9,6 +9,8 @@
 
 namespace inference_core {
 
+// FoundationPose 通过 BaseInferCore 接口调用 TensorRT 后端；这里管理同步流程与张量缓冲池。
+
 // used in sync infer
 struct _InnerSyncInferPackage : public async_pipeline::IPipelinePackage {
 public:
@@ -32,6 +34,7 @@ BaseInferCore::BaseInferCore()
 
 bool BaseInferCore::SyncInfer(BlobsTensor* tensors, const int batch_size)
 {
+  // Register/Track 的同步入口，依序调用后端 PreProcess、Inference、PostProcess。
   auto inner_package    = std::make_shared<_InnerSyncInferPackage>();
   inner_package->buffer = tensors;
   CHECK_STATE(PreProcess(inner_package), "[BaseInferCore] SyncInfer Preprocess Failed!!!");
@@ -42,6 +45,7 @@ bool BaseInferCore::SyncInfer(BlobsTensor* tensors, const int batch_size)
 
 std::shared_ptr<BlobsTensor> BaseInferCore::GetBuffer(bool block)
 {
+  // 从池中取可复用张量；block=true 时等待空闲缓冲，调用者用 shared_ptr 管理归还。
   return mem_buf_pool_->Alloc(block);
 }
 

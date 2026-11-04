@@ -181,6 +181,7 @@ void concat(cudaStream_t stream,
   concat_kernel<<<grid_size, block_size>>>(input_a, input_b, output, N, H, W, C1, C2);
 }
 
+// nvdiffrast CUDA 光栅化接口；Renderer::NvdiffrastRender 从此进入底层 kernel。
 void rasterize(cudaStream_t    stream,
                CR::CudaRaster *cr,
                float          *pos_ptr,
@@ -231,6 +232,7 @@ void rasterize(cudaStream_t    stream,
   cudaLaunchKernel((void *)RasterizeCudaFwdShaderKernel, gridSize, blockSize, args, 0, stream);
 }
 
+// 利用光栅化结果插值顶点属性，例如相机坐标和纹理坐标。
 void interpolate(cudaStream_t stream,
                  float       *attr_ptr,
                  float       *rast_ptr,
@@ -273,6 +275,7 @@ void interpolate(cudaStream_t stream,
   cudaLaunchKernel(func, gridSize, blockSize, args, 0, stream);
 }
 
+// 按插值纹理坐标采样 mesh 纹理，生成渲染颜色。
 void texture(cudaStream_t stream,
              float       *tex_ptr,
              float       *uv_ptr,

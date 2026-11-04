@@ -5,6 +5,8 @@
 
 namespace depth_confidence {
 
+// 可选深度过滤接口：输入为整流且缩放后的左右图和米制深度，输出 0..1 置信度。
+
 struct ConfidenceParameters {
     int patch_radius = 2;
     int texture_ksize = 5;
@@ -48,6 +50,7 @@ cv::Mat compute_temporal_confidence_simple(
     const cv::Mat& depth_prev = cv::Mat(),
     float sigma_t = 0.02f);
 
+// 组合光度、纹理、深度边缘和时间一致性；depth_prev 为空时跳过时间项。
 cv::Mat compute_confidence_map(
     const cv::Mat& left_img,
     const cv::Mat& right_img,
@@ -60,6 +63,7 @@ cv::Mat compute_confidence_map(
     const cv::Mat& depth_prev = cv::Mat(),
     const ConfidenceParameters& params = ConfidenceParameters{});
 
+// 低于阈值的像素置为无效深度；tracker 随后将结果映射回原始左图。
 cv::Mat filter_depth_with_confidence(
     const cv::Mat& depth,
     const cv::Mat& conf,

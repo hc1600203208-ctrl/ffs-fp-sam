@@ -15,6 +15,9 @@
 
 #include "gwc_volume_kernel.h"
 
+// FFS 主链路：feature engine 提取左右特征 -> CUDA 生成 group-wise correlation volume
+// -> post engine 预测全尺寸像素视差；米制深度换算由上层 tracker 完成。
+
 namespace {
 
 // Logger for TensorRT
@@ -135,6 +138,7 @@ FastFoundationStereoEstimator::FastFoundationStereoEstimator(const std::string& 
       m_featuresRight04Size(0),
       m_stem2xSize(0),
       m_gwcVolumeSize(0) {
+    // engine 输入固定为 HxW 且须能被 32 整除；初始化 CUDA stream 和所有缓冲。
 
     if (m_inputH % 32 != 0 || m_inputW % 32 != 0) {
         throw std::invalid_argument("FastFoundationStereoEstimator expects height/width divisible by 32.");
@@ -166,6 +170,7 @@ FastFoundationStereoEstimator::~FastFoundationStereoEstimator() {
 }
 
 void FastFoundationStereoEstimator::loadEngine(const std::string& featureEnginePath, const std::string& postEnginePath) {
+    // TensorRT 10 name-based I/O：先解析动态形状，再按 engine 实际输出尺寸连接两阶段。
 
     m_runtime = nvinfer1::createInferRuntime(gLogger);
     if (m_runtime == nullptr) {
@@ -253,6 +258,7 @@ void FastFoundationStereoEstimator::loadEngine(const std::string& featureEngineP
     maybeSetShape("stem_2x", stem2xDims);
 
     auto gwcVolumeDims = m_post_engine->getTensorShape("gwc_volume");
+    // post engine 的 gwc_volume 是 [batch, group, disparity, H/4, W/4]。
     if (gwcVolumeDims.nbDims != 5) {
         throw std::runtime_error("Expected 5D tensor for gwc_volume, got " + DimsToString(gwcVolumeDims));
     }
@@ -302,6 +308,7 @@ void FastFoundationStereoEstimator::loadEngine(const std::string& featureEngineP
 }
 
 void FastFoundationStereoEstimator::allocateBuffers() {
+    // setTensorAddress 将 feature 输出显存直接复用为 post 输入，避免 CPU 往返。
     const size_t inputBytes = static_cast<size_t>(3) * m_inputH * m_inputW * sizeof(float);
     m_dLeft  = std::make_unique<DeviceBuffer>(inputBytes);
     m_dRight = std::make_unique<DeviceBuffer>(inputBytes);
@@ -390,6 +397,7 @@ void FastFoundationStereoEstimator::printIOTensors() {
 }
 
 bool FastFoundationStereoEstimator::inference(const cv::Mat& leftRaw, const cv::Mat& rightRaw, cv::Mat& outputDisp) {
+    // tracker 调用此重载：只需要 CV_32FC1 像素视差，不取 top-k 或模型概率。
     return inference(leftRaw, rightRaw, outputDisp, nullptr, nullptr);
 }
 
@@ -427,6 +435,7 @@ bool FastFoundationStereoEstimator::inference(const cv::Mat& leftRaw, const cv::
 bool FastFoundationStereoEstimator::infer(const cv::Mat& leftImg, const cv::Mat& rightImg,
                                           cv::Mat& outputDisp, std::vector<cv::Mat>* topk_cost,
                                           cv::Mat* model_confidence) {
+    // 同一 CUDA stream 上按序预处理、feature、GWC、post 和下载；末尾同步确保 cv::Mat 可读。
     if (leftImg.empty() || rightImg.empty()) {
         std::cerr << "Input images are empty!" << std::endl;
         return false;
@@ -442,6 +451,7 @@ bool FastFoundationStereoEstimator::infer(const cv::Mat& leftImg, const cv::Mat&
     CHECK_CUDA(cudaMemcpyAsync(m_dRawRGBRight->ptr, rightImg.data, m_inputH * m_inputW * 3, cudaMemcpyHostToDevice, m_stream));
 
     // 2. Run CUDA Preprocessing Kernels (Converts BGR HWC -> RGB CHW Float)
+    // OpenCV BGR HWC uint8 -> RGB CHW float；默认按 ImageNet 统计量归一化。
     LaunchPreprocessKernel(m_dRawRGBLeft->as<uint8_t>(), m_dLeft->as<float>(), 
                            m_inputW, m_inputH, m_stream);
     LaunchPreprocessKernel(m_dRawRGBRight->as<uint8_t>(), m_dRight->as<float>(), 
@@ -477,6 +487,7 @@ bool FastFoundationStereoEstimator::infer(const cv::Mat& leftImg, const cv::Mat&
     const bool reverse_gwc_shift =
         gwc_direction_env != nullptr && std::strcmp(gwc_direction_env, "right") == 0;
 
+    // 每个视差平移右图特征并按通道分组求相关；结果直接送入 post engine。
     LaunchGwcVolumeKernel(
         m_dFeaturesLeft04Half->as<half>(), 
         m_dFeaturesRight04Half->as<half>(), 

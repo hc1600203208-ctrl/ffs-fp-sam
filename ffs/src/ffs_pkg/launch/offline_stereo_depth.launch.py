@@ -3,6 +3,7 @@ import launch
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -60,6 +61,28 @@ def generate_launch_description():
                               description="Output depth filtered only by FFS internal confidence"),
         DeclareLaunchArgument("model_conf_threshold", default_value="0.3",
                               description="FFS internal matching confidence threshold in [0, 1]"),
+        DeclareLaunchArgument("patch_radius", default_value="2",
+                              description="Photometric confidence patch radius in pixels"),
+        DeclareLaunchArgument("texture_ksize", default_value="5",
+                              description="Texture confidence neighborhood size"),
+        DeclareLaunchArgument("sigma_photo", default_value="0.12",
+                              description="Photometric confidence scale"),
+        DeclareLaunchArgument("sigma_e", default_value="0.15",
+                              description="Depth-edge confidence scale"),
+        DeclareLaunchArgument("sigma_t", default_value="0.02",
+                              description="Temporal confidence depth scale in meters"),
+        DeclareLaunchArgument("alpha_edge", default_value="0.8",
+                              description="Image-edge contribution to depth-edge confidence"),
+        DeclareLaunchArgument("w_photo", default_value="0.45",
+                              description="Photometric confidence exponent"),
+        DeclareLaunchArgument("w_tex", default_value="0.20",
+                              description="Texture confidence exponent"),
+        DeclareLaunchArgument("w_grad", default_value="0.20",
+                              description="Depth-edge confidence exponent"),
+        DeclareLaunchArgument("w_tmp", default_value="0.15",
+                              description="Temporal confidence exponent"),
+        DeclareLaunchArgument("conf_threshold", default_value="0.35",
+                              description="Combined depth-confidence filtering threshold in [0, 1]"),
         DeclareLaunchArgument(
             "caminfo_path",
             default_value="jr714.txt",
@@ -127,6 +150,17 @@ def generate_launch_description():
             {"model_confidence_subdir": LaunchConfiguration("model_confidence_subdir")},
             {"model_filtered_depth_subdir": LaunchConfiguration("model_filtered_depth_subdir")},
             {"model_conf_threshold": LaunchConfiguration("model_conf_threshold")},
+            {"patch_radius": ParameterValue(LaunchConfiguration("patch_radius"), value_type=int)},
+            {"texture_ksize": ParameterValue(LaunchConfiguration("texture_ksize"), value_type=int)},
+            {"sigma_photo": ParameterValue(LaunchConfiguration("sigma_photo"), value_type=float)},
+            {"sigma_e": ParameterValue(LaunchConfiguration("sigma_e"), value_type=float)},
+            {"sigma_t": ParameterValue(LaunchConfiguration("sigma_t"), value_type=float)},
+            {"alpha_edge": ParameterValue(LaunchConfiguration("alpha_edge"), value_type=float)},
+            {"w_photo": ParameterValue(LaunchConfiguration("w_photo"), value_type=float)},
+            {"w_tex": ParameterValue(LaunchConfiguration("w_tex"), value_type=float)},
+            {"w_grad": ParameterValue(LaunchConfiguration("w_grad"), value_type=float)},
+            {"w_tmp": ParameterValue(LaunchConfiguration("w_tmp"), value_type=float)},
+            {"conf_threshold": ParameterValue(LaunchConfiguration("conf_threshold"), value_type=float)},
             {"caminfo_path": LaunchConfiguration("caminfo_path")},
             {"input_image_width": LaunchConfiguration("input_image_width")},
             {"input_image_height": LaunchConfiguration("input_image_height")},

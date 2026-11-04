@@ -30,15 +30,106 @@ def describe(values: np.ndarray) -> dict[str, float | int]:
     }
 
 
+def plot_comparison(raw_error: np.ndarray, filtered_error: np.ndarray, summary: dict, output: Path) -> None:
+    """Redraw cached measurements without changing the point samples or reference."""
+    blue, red = "#2877b9", "#cb4a48"
+    groups = ((raw_error, "Raw Depth", blue), (filtered_error, "Filtered Depth", red))
+    plt.rcParams.update({"font.size": 11, "axes.titlesize": 13, "axes.labelsize": 11})
+    fig, axes = plt.subplots(1, 3, figsize=(20, 7), gridspec_kw={"width_ratios": [1, 1.3, 1]})
+    fig.subplots_adjust(left=0.05, right=0.985, bottom=0.19, top=0.82, wspace=0.27)
+    bins = np.linspace(0, 0.1, 101)
+    for values, label, color in groups:
+        axes[0].hist(values, bins=bins, weights=np.full(len(values), 1 / (len(values) * np.diff(bins)[0])),
+                     alpha=0.45, label=label, color=color)
+    axes[0].set(xlabel="Point-to-mesh error (m)", ylabel="Probability density (log scale)",
+                title="(a) Long-tail error distribution", xlim=(0, 0.1), yscale="log")
+    axes[0].legend(frameon=False, loc="upper right")
+    axes[0].text(0.97, 0.80,
+                 f"Outside displayed range (>0.1 m)\nRaw: {np.mean(raw_error > 0.1):.2%}\n"
+                 f"Filtered: {np.mean(filtered_error > 0.1):.2%}",
+                 ha="right", va="top", transform=axes[0].transAxes, fontsize=10)
+
+    box_ax = axes[1]
+    box = box_ax.boxplot([raw_error * 1000, filtered_error * 1000],
+                         labels=["Raw Depth", "Filtered Depth"], showfliers=False,
+                         widths=0.30, patch_artist=True,
+                         medianprops={"color": "#202020", "linewidth": 2.5})
+    for patch, (_, _, color) in zip(box["boxes"], groups):
+        patch.set(facecolor=color, edgecolor=color, alpha=0.45)
+    box_ax.set(xlabel="Depth group", ylabel="Point-to-mesh error (mm)",
+               title="(b) Quartiles, median and outliers", xlim=(0.13, 2.87), ylim=(0, 6))
+    for position, (values, _, color) in enumerate(groups, 1):
+        q1, median, q3 = np.quantile(values, [0.25, 0.5, 0.75]) * 1000
+        fliers = values[(values * 1000 > q3 + 1.5 * (q3 - q1)) & (values <= 0.006)] * 1000
+        rng = np.random.default_rng(position)
+        shown = rng.choice(fliers, size=min(220, len(fliers)), replace=False)
+        box_ax.scatter(position + rng.uniform(-0.12, 0.12, len(shown)), shown,
+                       s=5, color=color, alpha=0.30, linewidths=0, rasterized=True)
+        side = -1 if position == 1 else 1
+        edge = position + side * 0.15
+        label_x = position + side * 0.27
+        for value, label in ((q1, "Q1"), (median, "Median"), (q3, "Q3")):
+            box_ax.plot([edge, label_x], [value, value], color=color, linewidth=1.2)
+            box_ax.text(label_x + side * 0.02, value, f"{label} {value:.3f}",
+                        ha="right" if side < 0 else "left", va="center", fontsize=9)
+        bracket_x = position - side * 0.26
+        box_ax.annotate("", xy=(bracket_x, q1), xytext=(bracket_x, q3),
+                        arrowprops={"arrowstyle": "|-|", "color": color, "linewidth": 1.5})
+        box_ax.text(bracket_x - side * 0.07, (q1 + q3) / 2,
+                    f"IQR\n{q3 - q1:.3f} mm", ha="center", va="center", fontsize=9,
+                    color=color)
+
+    for values, label, color in groups:
+        sorted_values = np.sort(values)
+        axes[2].plot(sorted_values, np.arange(1, len(values) + 1) / len(values), color=color,
+                     label=label, linewidth=2.2)
+    axes[2].set(xlabel="Error threshold (m)", ylabel="Cumulative probability",
+                title="(c) Fraction below an error threshold", xlim=(0, 0.01), ylim=(0, 1.02))
+    axes[2].legend(frameon=False, loc="lower right")
+    threshold = 0.005
+    axes[2].axvline(threshold, color="#777777", linestyle=":", linewidth=1)
+    for values, _, color in groups:
+        axes[2].plot(threshold, np.mean(values <= threshold), "o", color=color, markersize=5)
+    axes[2].text(0.96, 0.63,
+                 f"Error \u2264 5 mm\nRaw: {np.mean(raw_error <= threshold):.2%}\n"
+                 f"Filtered: {np.mean(filtered_error <= threshold):.2%}",
+                 transform=axes[2].transAxes, ha="right", va="top", fontsize=10)
+    for ax in axes:
+        ax.grid(alpha=0.18)
+        ax.set_axisbelow(True)
+    fig.suptitle("Raw vs confidence-filtered depth: central spread and long-tail errors", y=0.97, fontsize=17)
+    fig.text(0.5, 0.91, f"{summary['frames']} frames | retained object pixels: {summary['retained_pixel_fraction']:.1%} | "
+             "same reference mesh, poses and sampled points", ha="center", fontsize=11)
+    fig.text(0.05, 0.085,
+             "Box = Q1\u2013Q3 (middle 50%); thick line = median; IQR = Q3 \u2212 Q1. "
+             "Whiskers end at the most extreme observations within Q1 \u2212 1.5\u00d7IQR and Q3 + 1.5\u00d7IQR.", fontsize=10)
+    fig.text(0.05, 0.045,
+             "Dots = sampled fliers; boxplot zooms to 0–6 mm. Beyond 6 mm: "
+             f"Raw {np.mean(raw_error > 0.006):.2%}, Filtered {np.mean(filtered_error > 0.006):.2%}. "
+             "Histogram/CDF use all errors, normalized per group.", fontsize=10)
+    fig.savefig(output / "comparison_annotated.png", dpi=240)
+    fig.savefig(output / "comparison_annotated.pdf")
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, default=Path("/home/hc/weizi/dataset/jrnew-blue"))
     parser.add_argument("--evaluate_utils", type=Path, default=Path("/home/hc/weizi/BundleSDF_confidence_main/evaluate"))
     parser.add_argument("--points_per_frame", type=int, default=4000)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--plot_only", action="store_true", help="Redraw the saved point_errors_m.npz without recomputing distances.")
     args = parser.parse_args()
     if args.points_per_frame <= 0:
         parser.error("--points_per_frame must be positive")
+
+    output = args.dataset.resolve() / "evaluate/reconstruction_depth_error_distribution"
+    if args.plot_only:
+        summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+        with np.load(output / "point_errors_m.npz") as cached:
+            plot_comparison(cached["raw"], cached["filtered"], summary, output)
+        print(f"Redrawn cached measurements in {output}")
+        return
 
     sys.path.insert(0, str(args.evaluate_utils.resolve()))
     from geometry_utils import MeshDistanceQuery, backproject_depth, camera_points_to_object
@@ -119,44 +210,7 @@ def main() -> None:
     (output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     np.savez_compressed(output / "point_errors_m.npz", raw=raw_error, filtered=filtered_error, removed=removed_error)
 
-    blue, red = "#2877b9", "#cb4a48"
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5.2), constrained_layout=True)
-    bins = np.linspace(0, 0.1, 101)
-    for values, label, color in ((raw_error, "Raw Depth", blue), (filtered_error, "Filtered Depth", red)):
-        axes[0].hist(values, bins=bins, weights=np.full(len(values), 1 / (len(values) * (bins[1] - bins[0]))),
-                     alpha=0.5, label=label, color=color)
-    axes[0].set(xlabel="Error (m)", ylabel="Density (log scale)", title="Point-to-mesh error histogram", xlim=(0, 0.1))
-    axes[0].set_yscale("log")
-    axes[0].legend(frameon=False)
-    axes[0].text(0.98, 0.96, f">0.1 m: Raw {summary['raw']['over_100mm_fraction']:.1%}\nFiltered {summary['filtered']['over_100mm_fraction']:.1%}",
-                 ha="right", va="top", transform=axes[0].transAxes, fontsize=9)
-
-    box = axes[1].boxplot([raw_error, filtered_error], tick_labels=["Raw Depth", "Filtered Depth"],
-                          showfliers=True, widths=0.5, patch_artist=True,
-                          flierprops={"marker": ".", "markersize": 1, "alpha": 0.08, "rasterized": True})
-    for patch, color in zip(box["boxes"], (blue, red)):
-        patch.set(facecolor=color, alpha=0.5)
-    axes[1].set(xlabel="Depth group", ylabel="Error (m, log scale)", title="Median, IQR, whiskers and fliers")
-    axes[1].set_yscale("log")
-
-    for values, label, color in ((raw_error, "Raw Depth", blue), (filtered_error, "Filtered Depth", red)):
-        sorted_values = np.sort(values)
-        axes[2].plot(sorted_values, np.arange(1, len(values) + 1) / len(values), color=color, label=label, linewidth=2)
-    axes[2].set(xlabel="Error threshold (m)", ylabel="Cumulative probability", title="Error CDF", xlim=(0, 0.1), ylim=(0, 1))
-    axes[2].legend(frameon=False)
-    zoom = axes[2].inset_axes([0.43, 0.2, 0.53, 0.45])
-    for values, color in ((raw_error, blue), (filtered_error, red)):
-        sorted_values = np.sort(values)
-        zoom.plot(sorted_values, np.arange(1, len(values) + 1) / len(values), color=color, linewidth=1.5)
-    zoom.set(xlim=(0, 0.01), ylim=(0.85, 1), title="0-10 mm detail")
-    zoom.tick_params(labelsize=8)
-    zoom.grid(alpha=0.2)
-    for ax in axes:
-        ax.grid(alpha=0.2)
-    fig.suptitle(f"Raw vs confidence-filtered depth | {len(ids)} frames | retained pixels {summary['retained_pixel_fraction']:.1%}")
-    fig.savefig(output / "comparison.png", dpi=200)
-    fig.savefig(output / "comparison.pdf")
-    plt.close(fig)
+    plot_comparison(raw_error, filtered_error, summary, output)
     print(json.dumps(summary, indent=2))
     print(f"Saved results to {output}")
 

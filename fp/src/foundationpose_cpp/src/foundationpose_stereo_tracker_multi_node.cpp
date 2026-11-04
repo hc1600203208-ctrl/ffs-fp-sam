@@ -38,6 +38,9 @@
 #include "trt_core/trt_core.h"
 #include "tracking_performance_profiler.hpp"
 
+// 主链路：同步左右 ROS 图像 -> FFS 视差/米制深度 -> 读取 SAM 首帧 PNG 注册位姿
+// -> 每目标独立工作线程 Track -> 发布 PoseStamped 与可选可视化。
+
 namespace
 {
 
@@ -49,6 +52,7 @@ constexpr float kRadiansToDegrees = 57.29577951308232F;
 
 struct PreparedImage
 {
+  // 保留缩放和补边参数，供视差深度回映射到原分辨率；image 是 FFS 输入尺寸。
   cv::Mat image;
   double scale{1.0};
   int pad_left{0};
@@ -67,6 +71,7 @@ struct CameraIntrinsics
 
 std::string SanitizeName(const std::string &name)
 {
+  // 目标名转为 ROS topic 后缀；LoadParameters 会检查转换后不重名。
   std::string result;
   result.reserve(name.size());
   for (const unsigned char character : name)
@@ -91,6 +96,7 @@ bool CheckTimestamp(const builtin_interfaces::msg::Time &left,
                     const builtin_interfaces::msg::Time &right,
                     double max_delta_sec)
 {
+  // ApproximateTime 负责配对；这里再次按实际时间戳拒绝超过阈值的组合。
   const double left_seconds = static_cast<double>(left.sec) + static_cast<double>(left.nanosec) / 1e9;
   const double right_seconds = static_cast<double>(right.sec) + static_cast<double>(right.nanosec) / 1e9;
   return std::fabs(left_seconds - right_seconds) <= max_delta_sec;
@@ -98,6 +104,7 @@ bool CheckTimestamp(const builtin_interfaces::msg::Time &left,
 
 Eigen::Matrix3f BuildIntrinsicMatrix(double fx, double fy, double cx, double cy)
 {
+  // FP 渲染/反投影使用原始左图的 K，不使用缩放后的 FFS 输入 K。
   if (fx <= 0.0 || fy <= 0.0)
   {
     throw std::invalid_argument("Camera intrinsics fx/fy must be positive");
@@ -112,11 +119,13 @@ Eigen::Matrix3f BuildIntrinsicMatrix(double fx, double fy, double cx, double cy)
 
 cv::Mat RosImageToCvMat(const sensor_msgs::msg::Image::ConstSharedPtr &message)
 {
+  // toCvShare 不复制像素；使用期间必须保持 ROS message 存活。
   return cv_bridge::toCvShare(message, message->encoding)->image;
 }
 
 cv::Mat ConvertPoseRgbImage(const sensor_msgs::msg::Image::ConstSharedPtr &message)
 {
+  // FoundationPose 上传 GPU 时按 RGB8 连续字节读取，故必须统一通道顺序。
   const cv::Mat image = RosImageToCvMat(message);
   if (message->encoding == sensor_msgs::image_encodings::RGB8)
   {
@@ -150,6 +159,7 @@ cv::Mat ConvertPoseRgbImage(const sensor_msgs::msg::Image::ConstSharedPtr &messa
 
 cv::Mat ConvertStereoInputImage(const sensor_msgs::msg::Image::ConstSharedPtr &message)
 {
+  // FFS 预处理 kernel 将三通道输入视作 OpenCV BGR；单通道由 PrepareStereoInput 转 BGR。
   const cv::Mat image = RosImageToCvMat(message);
   if (image.channels() == 1 || image.channels() == 3)
   {
@@ -166,6 +176,7 @@ cv::Mat ConvertStereoInputImage(const sensor_msgs::msg::Image::ConstSharedPtr &m
 
 cv::Mat ConvertMaskImage(cv::Mat mask)
 {
+  // 磁盘 PNG 统一转 CV_8UC1 二值图；正像素为目标，零为背景。
   if (mask.empty())
   {
     return mask;
@@ -202,6 +213,7 @@ cv::Mat ConvertMaskImage(cv::Mat mask)
 
 PreparedImage PrepareStereoInput(const cv::Mat &input, int target_width, int target_height)
 {
+  // 等比例缩放后补边到 engine 固定输入尺寸；不能直接拉伸视差几何。
   PreparedImage result;
   if (input.empty())
   {
@@ -240,6 +252,7 @@ PreparedImage PrepareStereoInput(const cv::Mat &input, int target_width, int tar
 
 double ComputeRectifiedBaselineMeters(const StereoRectificationMaps &maps)
 {
+  // OpenCV stereoRectify 的 P2(0,3)=-fx*baseline，取绝对值恢复米制基线。
   if (maps.p2.empty())
   {
     return 0.0;
@@ -251,6 +264,7 @@ double ComputeRectifiedBaselineMeters(const StereoRectificationMaps &maps)
 CameraIntrinsics ComputePreparedIntrinsics(const StereoRectificationMaps &maps,
                                            const PreparedImage &prepared)
 {
+  // P1 是整流左相机 K；对 resize 和居中补边分别修正焦距和主点。
   CameraIntrinsics intrinsics;
   if (maps.p1.empty())
   {
@@ -266,6 +280,7 @@ CameraIntrinsics ComputePreparedIntrinsics(const StereoRectificationMaps &maps,
 cv::Mat DisparityToDepthMeters(const cv::Mat &disparity, float fx, float baseline,
                                float min_depth_meters, float max_depth_meters)
 {
+  // 针孔双目公式 Z=fx*baseline/disparity；fx 是补边缩放后的像素焦距，baseline 为米。
   cv::Mat depth = cv::Mat::zeros(disparity.size(), CV_32FC1);
   const float numerator = fx * baseline;
   for (int y = 0; y < disparity.rows; ++y)
@@ -293,6 +308,7 @@ cv::Mat DisparityToDepthMeters(const cv::Mat &disparity, float fx, float baselin
 cv::Mat RestoreToRectifiedResolution(const cv::Mat &image, const PreparedImage &prepared,
                                      const cv::Size &rectified_size)
 {
+  // 先去掉 FFS 输入补边，再恢复整流图尺寸；随后才可逆映射到原始左相机。
   if (image.empty())
   {
     return {};
@@ -312,6 +328,7 @@ cv::Mat RestoreToRectifiedResolution(const cv::Mat &image, const PreparedImage &
 geometry_msgs::msg::PoseStamped PoseMatrixToPoseStamped(const Eigen::Matrix4f &pose,
                                                         const std_msgs::msg::Header &header)
 {
+  // 4x4 矩阵的平移单位为米；旋转转为 ROS geometry_msgs 四元数。
   geometry_msgs::msg::PoseStamped message;
   message.header = header;
   message.pose.position.x = pose(0, 3);
@@ -328,6 +345,7 @@ geometry_msgs::msg::PoseStamped PoseMatrixToPoseStamped(const Eigen::Matrix4f &p
 
 Eigen::Vector3f RotationMatrixToRpyDegrees(const Eigen::Matrix3f &rotation)
 {
+  // 仅用于人类可读的日志/叠字，ROS 消息仍发布四元数。
   const float sy = std::sqrt(rotation(0, 0) * rotation(0, 0) + rotation(1, 0) * rotation(1, 0));
   const bool singular = sy < 1e-6F;
   const float roll = singular ? std::atan2(-rotation(1, 2), rotation(1, 1))
@@ -340,6 +358,7 @@ Eigen::Vector3f RotationMatrixToRpyDegrees(const Eigen::Matrix3f &rotation)
 void DrawTextWithOutline(cv::Mat &image, const std::string &text, const cv::Point &origin,
                          double scale, const cv::Scalar &color)
 {
+  // 双层 OpenCV putText 提高文字在复杂图像上的对比度。
   cv::putText(image, text, origin, cv::FONT_HERSHEY_SIMPLEX, scale, cv::Scalar(0, 0, 0), 3,
               cv::LINE_AA);
   cv::putText(image, text, origin, cv::FONT_HERSHEY_SIMPLEX, scale, color, 1, cv::LINE_AA);
@@ -347,6 +366,7 @@ void DrawTextWithOutline(cv::Mat &image, const std::string &text, const cv::Poin
 
 void DrawFirstPoseOverlay(cv::Mat &image, const Eigen::Matrix4f &pose)
 {
+  // 只给首个目标显示平滑位姿数值，不修改 ROS pose topic。
   const Eigen::Vector3f translation = pose.block<3, 1>(0, 3);
   const Eigen::Vector3f rpy = RotationMatrixToRpyDegrees(pose.block<3, 3>(0, 0));
   const std::array<std::string, 7> lines = {
@@ -367,6 +387,7 @@ void Draw3DBoundingBox(const Eigen::Matrix3f &intrinsic, const Eigen::Matrix4f &
                        const Eigen::Vector3f &dimension, const cv::Scalar &box_color,
                        const std::string &object_name, cv::Mat &image)
 {
+  // 将 mesh 3D 包围盒用 K 投影到原始左图像素；OpenCV 绘图颜色按 BGR 指定。
   const float half_length = dimension(0) / 2.0F;
   const float half_width = dimension(1) / 2.0F;
   const float half_height = dimension(2) / 2.0F;
@@ -448,6 +469,7 @@ public:
   FoundationPoseStereoTrackerMultiNode()
   : Node("foundationpose_stereo_tracker_multi_node"), image_qos_profile_(rclcpp::QoS(10))
   {
+    // 构造期仅加载参数/模型并建立订阅；每帧逻辑从 StereoCallback 开始。
     DeclareParameters();
     LoadParameters();
     BuildStereoEstimator();
@@ -482,6 +504,7 @@ private:
 
   struct TrackingWorker
   {
+    // 每目标一个工作线程；条件变量在主回调和 Track 之间传递一帧任务/结果。
     std::thread thread;
     std::mutex mutex;
     std::condition_variable job_ready;
@@ -499,6 +522,7 @@ private:
 
   struct TrackedObject
   {
+    // name/mesh/mask 三个数组按索引配对；last_pose 是下一帧 Track 的初始假设。
     std::string name;
     std::string mask_path;
     cv::Scalar box_color;
@@ -514,6 +538,7 @@ private:
 
   void DeclareParameters()
   {
+    // 声明 ROS 参数默认值；同名 YAML 项由 rclcpp 在节点构造时覆盖。
     declare_parameter<int>("image_reliability", static_cast<int>(rclcpp::ReliabilityPolicy::BestEffort));
     declare_parameter<std::string>("left_image_topic", "/left/image_raw");
     declare_parameter<std::string>("right_image_topic", "/right/image_raw");
@@ -540,6 +565,11 @@ private:
     declare_parameter<std::string>("visualization_window_name", "foundationpose_multi_visualization");
     declare_parameter<bool>("publish_visualization", false);
     declare_parameter<bool>("show_visualization_window", false);
+    declare_parameter<bool>("publish_depth_visualization", false);
+    declare_parameter<std::string>("depth_visualization_topic", "/foundationpose/depth_image");
+    declare_parameter<double>("depth_visualization_fps", 5.0);
+    declare_parameter<bool>("publish_combined_visualization", true);
+    declare_parameter<std::string>("combined_visualization_topic", "/foundationpose/combined_visualization");
     declare_parameter<bool>("enable_pose_smoothing", true);
     declare_parameter<double>("pose_smoothing_translation_alpha", 0.45);
     declare_parameter<double>("pose_smoothing_rotation_alpha", 0.45);
@@ -570,6 +600,7 @@ private:
 
   void LoadParameters()
   {
+    // 读取并校验跨模块契约：标定文件、FFS 两个 engine、FP refiner/scorer 和目标 mesh。
     image_reliability_ = get_parameter("image_reliability").as_int();
     left_image_topic_ = get_parameter("left_image_topic").as_string();
     right_image_topic_ = get_parameter("right_image_topic").as_string();
@@ -596,6 +627,16 @@ private:
     visualization_window_name_ = get_parameter("visualization_window_name").as_string();
     publish_visualization_ = get_parameter("publish_visualization").as_bool();
     show_visualization_window_ = get_parameter("show_visualization_window").as_bool();
+    publish_depth_visualization_ = get_parameter("publish_depth_visualization").as_bool();
+    depth_visualization_topic_ = get_parameter("depth_visualization_topic").as_string();
+    depth_visualization_fps_ = get_parameter("depth_visualization_fps").as_double();
+    publish_combined_visualization_ = get_parameter("publish_combined_visualization").as_bool();
+    combined_visualization_topic_ = get_parameter("combined_visualization_topic").as_string();
+    if ((publish_depth_visualization_ || publish_combined_visualization_) &&
+        (!std::isfinite(depth_visualization_fps_) || depth_visualization_fps_ <= 0.0))
+    {
+      throw std::invalid_argument("depth_visualization_fps must be positive when image publishing is enabled");
+    }
     enable_pose_smoothing_ = get_parameter("enable_pose_smoothing").as_bool();
     translation_alpha_ = std::clamp(get_parameter("pose_smoothing_translation_alpha").as_double(), 0.0, 1.0);
     rotation_alpha_ = std::clamp(get_parameter("pose_smoothing_rotation_alpha").as_double(), 0.0, 1.0);
@@ -660,6 +701,7 @@ private:
 
   void ValidateRequiredFile(const std::string &path, const std::string &parameter_name) const
   {
+    // 启动时提前检查 mesh 和 engine 路径，避免第一帧才暴露缺失文件。
     if (path.empty() || !std::filesystem::exists(path))
     {
       throw std::invalid_argument("Path from parameter '" + parameter_name + "' does not exist: " + path);
@@ -668,6 +710,7 @@ private:
 
   void BuildStereoEstimator()
   {
+    // FFS 的 feature/post 两个 TensorRT engine 顺序对应构造函数参数。
     if (stereo_model_type_ != "FAST_FOUNDATION_STEREO" || stereo_engine_file_paths_.size() != 2)
     {
       throw std::runtime_error("FAST_FOUNDATION_STEREO requires exactly two stereo engine paths");
@@ -680,6 +723,7 @@ private:
 
   std::shared_ptr<inference_core::BaseInferCore> CreateRefinerCore(std::uint64_t pose_batch_size) const
   {
+    // easy_deploy_tool 的 TRT 工厂按张量名/最大形状创建推理核心；6 通道为渲染/观测裁剪输入。
     return inference_core::CreateTrtInferCore(
         refiner_engine_path_,
         {{"transf_input", {pose_batch_size, kCropHeight, kCropWidth, 6}},
@@ -689,6 +733,7 @@ private:
 
   std::shared_ptr<inference_core::BaseInferCore> CreateScorerCore(std::uint64_t pose_batch_size) const
   {
+    // scorer 对候选位姿输出每个候选的分数；仅首次 Register 使用。
     return inference_core::CreateTrtInferCore(
         scorer_engine_path_,
         {{"transf_input", {pose_batch_size, kCropHeight, kCropWidth, 6}},
@@ -699,6 +744,7 @@ private:
   std::shared_ptr<detection_6d::Base6DofDetectionModel> CreatePoseModel(
       const TrackedObject &object, std::uint64_t pose_batch_size) const
   {
+    // 一个对象一套模型实例，避免并行 Track 共享其 renderer 和推理 buffer。
     return detection_6d::CreateFoundationPoseModel(
         CreateRefinerCore(pose_batch_size), CreateScorerCore(pose_batch_size), {object.mesh_loader}, intrinsic_,
         max_input_image_height_, max_input_image_width_);
@@ -706,6 +752,7 @@ private:
 
   void BuildObjectTrackers()
   {
+    // Assimp 从 mesh 文件加载几何和尺度；掩码路径与 SAM 的 PNG 输出相同。
     static const std::array<cv::Scalar, 8> colors = {
         cv::Scalar(0, 255, 255), cv::Scalar(255, 0, 255), cv::Scalar(255, 255, 0),
         cv::Scalar(0, 165, 255), cv::Scalar(203, 192, 255), cv::Scalar(128, 255, 0),
@@ -724,6 +771,7 @@ private:
 
   void InitializeProfiler()
   {
+    // 统计模块只记录耗时和丢帧，不参与计算结果。
     profiler_ = std::make_unique<foundationpose_profiling::TrackingPerformanceProfiler>();
     profiler_->Initialize(enable_profiling_, static_cast<std::size_t>(profiling_log_interval_frames_),
                           sync_queue_size_, max_sync_interval_sec_, object_names_);
@@ -731,6 +779,7 @@ private:
 
   void SetupRosInterfaces()
   {
+    // message_filters 的 ApproximateTime 将左右订阅者配对后调用 StereoCallback。
     image_qos_profile_.reliability(static_cast<rclcpp::ReliabilityPolicy>(image_reliability_));
     image_qos_profile_.history(rclcpp::HistoryPolicy::KeepLast);
     image_qos_profile_.durability(rclcpp::DurabilityPolicy::Volatile);
@@ -744,6 +793,16 @@ private:
     {
       visualization_publisher_ = create_publisher<sensor_msgs::msg::Image>(visualization_topic_, 10);
     }
+    if (publish_depth_visualization_)
+    {
+      depth_visualization_publisher_ = create_publisher<sensor_msgs::msg::Image>(
+          depth_visualization_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).best_effort());
+    }
+    if (publish_combined_visualization_)
+    {
+      combined_visualization_publisher_ = create_publisher<sensor_msgs::msg::Image>(
+          combined_visualization_topic_, rclcpp::QoS(rclcpp::KeepLast(1)).reliable());
+    }
     left_image_sub_.subscribe(this, left_image_topic_, image_qos_profile_.get_rmw_qos_profile());
     right_image_sub_.subscribe(this, right_image_topic_, image_qos_profile_.get_rmw_qos_profile());
     stereo_sync_ = std::make_shared<StereoSyncer>(StereoSyncPolicy(sync_queue_size_), left_image_sub_, right_image_sub_);
@@ -754,6 +813,7 @@ private:
 
   bool EnsureRectificationMaps(const cv::Size &image_size)
   {
+    // OpenCV 校正映射按图像尺寸缓存；尺寸变化时重建。
     if (rectification_ready_ && rectification_maps_.image_size == image_size)
     {
       return true;
@@ -770,6 +830,7 @@ private:
   bool BuildDepthFromStereo(const cv::Mat &left, const cv::Mat &right, cv::Mat *depth,
                             foundationpose_profiling::DepthTimingBreakdown *timings = nullptr)
   {
+    // 输出 CV_32FC1 米制深度，与原始左图逐像素对齐，供 FoundationPose 使用。
     if (depth == nullptr || left.size() != right.size() || !EnsureRectificationMaps(left.size()))
     {
       return false;
@@ -809,6 +870,7 @@ private:
           foundationpose_profiling::MillisecondsBetween(inference_start, std::chrono::steady_clock::now());
     }
     const double baseline = ComputeRectifiedBaselineMeters(rectification_maps_);
+    // 整流投影矩阵 P2 给出基线；P1 的焦距再按 FFS 输入缩放修正。
     const CameraIntrinsics intrinsics = ComputePreparedIntrinsics(rectification_maps_, prepared_left);
     if (baseline <= 0.0 || intrinsics.fx <= 0.0)
     {
@@ -826,6 +888,7 @@ private:
     cv::Mat depth_for_restore = depth_model;
     if (enable_depth_confidence_filter_)
     {
+      // 可选 FFS 置信度计算会结合双目光度、纹理、边缘和上一帧深度。
       const auto confidence_start = std::chrono::steady_clock::now();
       const cv::Mat confidence_map = depth_confidence::compute_confidence_map(
           prepared_left.image, prepared_right.image, depth_model,
@@ -857,6 +920,7 @@ private:
     const auto restore_start = std::chrono::steady_clock::now();
     const cv::Mat depth_rectified = RestoreToRectifiedResolution(depth_for_restore, prepared_left, left_rectified.size());
     *depth = AlignRectifiedDepthToOriginalLeft(depth_rectified, rectification_maps_, cv::INTER_NEAREST);
+    // inverse map 的采样坐标是“原始左图像素 -> 整流左图像素”。
     if (timings != nullptr)
     {
       timings->depth_restore_align_ms =
@@ -867,12 +931,14 @@ private:
 
   bool AllObjectsRegistered() const
   {
+    // 未齐备全部目标前仍走首帧注册路径，暂不执行并行 Track。
     return std::all_of(tracked_objects_.begin(), tracked_objects_.end(),
                        [](const TrackedObject &object) { return object.has_pose; });
   }
 
   void StartTrackingWorker(std::size_t index)
   {
+    // 注册成功后才启动该对象的持续跟踪线程。
     auto &object = tracked_objects_.at(index);
     object.tracking_worker = std::make_unique<TrackingWorker>();
     object.tracking_worker->thread = std::thread(
@@ -881,6 +947,7 @@ private:
 
   void StopTrackingWorkers() noexcept
   {
+    // 节点析构时唤醒所有等待任务的线程并 join，避免引用已释放的模型。
     for (auto &object : tracked_objects_)
     {
       if (object.tracking_worker == nullptr)
@@ -904,6 +971,7 @@ private:
 
   void TrackingWorkerLoop(std::size_t index)
   {
+    // Track 用上一帧 mesh 位姿作假设，仅执行 refiner；结果通过 job_finished 返回主线程。
     auto &object = tracked_objects_.at(index);
     auto &worker = *object.tracking_worker;
     std::unique_lock<std::mutex> lock(worker.mutex);
@@ -948,6 +1016,7 @@ private:
 
   void StereoCallback(const ImageMsg::ConstSharedPtr &left_message, const ImageMsg::ConstSharedPtr &right_message)
   {
+    // try_to_lock 丢弃堆积帧，保证上一帧尚在计算时不会重入共用状态。
     std::unique_lock<std::mutex> lock(process_mutex_, std::try_to_lock);
     if (!lock.owns_lock())
     {
@@ -977,9 +1046,11 @@ private:
       {
         return;
       }
+      PublishDepthVisualization(left_message->header, depth);
       if (!AllObjectsRegistered())
       {
         TryInitialRegistration(left_message->header, rgb, depth);
+        PublishCombinedVisualization(left_message->header, rgb, depth);
         if (profiler_)
         {
           profiler_->RecordRegistrationFrame();
@@ -987,6 +1058,7 @@ private:
         return;
       }
       const auto timing = RunTracking(left_message->header, rgb, depth, depth_timings, frame_start);
+      PublishCombinedVisualization(left_message->header, rgb, depth);
       if (profiler_)
       {
         profiler_->RecordTrackingFrame(timing);
@@ -1004,6 +1076,7 @@ private:
 
   bool LoadAllMasks(const cv::Size &image_size, std::vector<cv::Mat> *masks) const
   {
+    // 从 SAM 写入的 PNG 读取全体目标；任一尚未生成/全黑则暂不注册。
     masks->clear();
     masks->reserve(tracked_objects_.size());
     for (const auto &object : tracked_objects_)
@@ -1033,6 +1106,7 @@ private:
 
   void TryInitialRegistration(const std_msgs::msg::Header &header, const cv::Mat &rgb, const cv::Mat &depth)
   {
+    // 每隔 mask_poll_interval_ms 轮询；Register 使用当前 RGB/深度和首帧掩码。
     const auto now = std::chrono::steady_clock::now();
     if (last_mask_attempt_time_.time_since_epoch().count() != 0 &&
         now - last_mask_attempt_time_ < std::chrono::milliseconds(mask_poll_interval_ms_))
@@ -1059,6 +1133,7 @@ private:
       {
         {
           const auto registration_model = CreatePoseModel(tracked_objects_[index], kPoseBatchSize);
+          // Register 采样候选、refiner 细化并由 scorer 选出相机中的 mesh 位姿。
           success = registration_model->Register(
               rgb, depth, masks[index], tracked_objects_[index].name, pose, register_refine_iterations_);
         }
@@ -1090,6 +1165,7 @@ private:
       const foundationpose_profiling::DepthTimingBreakdown &depth_timings,
       const std::chrono::steady_clock::time_point &frame_start)
   {
+    // 广播同一帧 RGB/深度给每目标线程，再等全部结束；发布阶段只在主线程执行。
     foundationpose_profiling::TrackingFrameTiming timing;
     timing.per_object_refine_ms.assign(tracked_objects_.size(), 0.0);
     timing.per_object_schedule_wait_ms.assign(tracked_objects_.size(), 0.0);
@@ -1152,6 +1228,7 @@ private:
 
   Eigen::Matrix4f SmoothPoseForDisplay(TrackedObject &object, const Eigen::Matrix4f &raw_pose) const
   {
+    // 平移线性滤波、旋转四元数 slerp；原始 last_pose 仍用于下一帧追踪。
     if (!enable_pose_smoothing_)
     {
       object.has_smoothed_pose = false;
@@ -1183,6 +1260,7 @@ private:
 
   std_msgs::msg::Header PoseHeader(const std_msgs::msg::Header &header) const
   {
+    // 默认沿用左图 header.frame_id；可由 pose_frame_id 显式覆盖。
     auto output_header = header;
     if (!pose_frame_id_.empty())
     {
@@ -1193,6 +1271,7 @@ private:
 
   double PublishCurrentResults(const std_msgs::msg::Header &header, const cv::Mat &rgb, const std::string &mode)
   {
+    // 每目标及 primary topic 发布原始 PoseStamped；平滑值仅供日志和可视化。
     double se3_filter_ms = 0.0;
     const auto output_header = PoseHeader(header);
     for (std::size_t index = 0; index < tracked_objects_.size(); ++index)
@@ -1221,6 +1300,7 @@ private:
   void PrintFirstPose(const std_msgs::msg::Header &header, const Eigen::Matrix4f &pose,
                       const std::string &mode) const
   {
+    // 日志使用平滑位姿；xyz 为米，RPY 为度。
     const Eigen::Vector3f rpy = RotationMatrixToRpyDegrees(pose.block<3, 3>(0, 0));
     Eigen::Quaternionf quaternion(pose.block<3, 3>(0, 0));
     quaternion.normalize();
@@ -1234,6 +1314,7 @@ private:
 
   cv::Mat BuildVisualization(const cv::Mat &rgb) const
   {
+    // 输入 RGB 转 BGR 后绘制；ConvertPoseMesh2BBox 修正 mesh 坐标与包围盒坐标差异。
     cv::Mat visualization;
     cv::cvtColor(rgb, visualization, cv::COLOR_RGB2BGR);
     for (const auto &object : tracked_objects_)
@@ -1251,11 +1332,16 @@ private:
 
   void PublishVisualization(const std_msgs::msg::Header &header, const cv::Mat &rgb)
   {
+    // ROS Image topic 可选；OpenCV 窗口也可选，两者均不影响位姿输出。
     if (!publish_visualization_ && !show_visualization_window_)
     {
       return;
     }
     cv::Mat visualization = BuildVisualization(rgb);
+    if (!tracked_objects_.empty() && tracked_objects_.front().has_pose)
+    {
+      DrawFirstPoseOverlay(visualization, tracked_objects_.front().smoothed_pose);
+    }
     if (publish_visualization_ && visualization_publisher_)
     {
       auto message = cv_bridge::CvImage(header, sensor_msgs::image_encodings::BGR8, visualization).toImageMsg();
@@ -1263,13 +1349,67 @@ private:
     }
     if (show_visualization_window_)
     {
-      if (!tracked_objects_.empty() && tracked_objects_.front().has_pose)
-      {
-        DrawFirstPoseOverlay(visualization, tracked_objects_.front().smoothed_pose);
-      }
       cv::imshow(visualization_window_name_, visualization);
       cv::waitKey(1);
     }
+  }
+
+  void PublishDepthVisualization(const std_msgs::msg::Header &header, const cv::Mat &depth)
+  {
+    if (!depth_visualization_publisher_)
+    {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const auto interval = std::chrono::duration<double>(1.0 / depth_visualization_fps_);
+    if (last_depth_visualization_time_.time_since_epoch().count() != 0 &&
+        now - last_depth_visualization_time_ < interval)
+    {
+      return;
+    }
+    auto message = cv_bridge::CvImage(header, sensor_msgs::image_encodings::TYPE_32FC1, depth).toImageMsg();
+    depth_visualization_publisher_->publish(*message);
+    last_depth_visualization_time_ = now;
+  }
+
+  void PublishCombinedVisualization(const std_msgs::msg::Header &header, const cv::Mat &rgb, const cv::Mat &depth)
+  {
+    if (!combined_visualization_publisher_)
+    {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const auto interval = std::chrono::duration<double>(1.0 / depth_visualization_fps_);
+    if (last_combined_visualization_time_.time_since_epoch().count() != 0 &&
+        now - last_combined_visualization_time_ < interval)
+    {
+      return;
+    }
+    cv::Mat left_bgr;
+    cv::cvtColor(rgb, left_bgr, cv::COLOR_RGB2BGR);
+    cv::Mat tracking = BuildVisualization(rgb);
+    if (!tracked_objects_.empty() && tracked_objects_.front().has_pose)
+    {
+      DrawFirstPoseOverlay(tracking, tracked_objects_.front().smoothed_pose);
+    }
+    cv::Mat scaled(depth.size(), CV_8UC1, cv::Scalar(0));
+    cv::Mat valid = (depth > 0.0f) & (depth < max_depth_meters_) & (depth == depth);
+    depth.convertTo(scaled, CV_8UC1, 255.0 / 4.7, -0.3 * 255.0 / 4.7);
+    cv::Mat colored;
+    cv::applyColorMap(scaled, colored, cv::COLORMAP_TURBO);
+    colored.setTo(cv::Scalar(0, 0, 0), ~valid);
+    cv::Mat combined(depth.rows + 32, depth.cols * 3, CV_8UC3, cv::Scalar(20, 24, 28));
+    left_bgr.copyTo(combined(cv::Rect(0, 32, depth.cols, depth.rows)));
+    tracking.copyTo(combined(cv::Rect(depth.cols, 32, depth.cols, depth.rows)));
+    colored.copyTo(combined(cv::Rect(depth.cols * 2, 32, depth.cols, depth.rows)));
+    cv::putText(combined, "Left camera", cv::Point(8, 23), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(240, 240, 240), 1);
+    cv::putText(combined, "FoundationPose tracking", cv::Point(depth.cols + 8, 23), cv::FONT_HERSHEY_SIMPLEX,
+                0.6, cv::Scalar(240, 240, 240), 1);
+    cv::putText(combined, "Depth: 0.3-5.0 m; black=invalid", cv::Point(depth.cols * 2 + 8, 23),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(240, 240, 240), 1);
+    combined_visualization_publisher_->publish(
+        *cv_bridge::CvImage(header, sensor_msgs::image_encodings::BGR8, combined).toImageMsg());
+    last_combined_visualization_time_ = now;
   }
 
   int image_reliability_{1};
@@ -1298,6 +1438,11 @@ private:
   std::string visualization_window_name_;
   bool publish_visualization_{false};
   bool show_visualization_window_{false};
+  bool publish_depth_visualization_{false};
+  std::string depth_visualization_topic_;
+  double depth_visualization_fps_{5.0};
+  bool publish_combined_visualization_{true};
+  std::string combined_visualization_topic_;
   bool enable_pose_smoothing_{true};
   double translation_alpha_{0.45};
   double rotation_alpha_{0.45};
@@ -1318,10 +1463,14 @@ private:
   std::unique_ptr<foundationpose_profiling::TrackingPerformanceProfiler> profiler_;
   std::vector<TrackedObject> tracked_objects_;
   std::chrono::steady_clock::time_point last_mask_attempt_time_{};
+  std::chrono::steady_clock::time_point last_depth_visualization_time_{};
+  std::chrono::steady_clock::time_point last_combined_visualization_time_{};
   std::mutex process_mutex_;
   rclcpp::QoS image_qos_profile_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr primary_pose_publisher_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr visualization_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_visualization_publisher_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr combined_visualization_publisher_;
   SubscriberT left_image_sub_;
   SubscriberT right_image_sub_;
   std::shared_ptr<StereoSyncer> stereo_sync_;
@@ -1329,6 +1478,7 @@ private:
 
 int main(int argc, char **argv)
 {
+  // rclcpp::spin 驱动 message_filters 回调；异常时记录启动错误并关闭 ROS。
   rclcpp::init(argc, argv);
   try
   {

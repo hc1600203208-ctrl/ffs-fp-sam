@@ -217,6 +217,7 @@ void WrapFloatPtrToNHWCTensor(
   output_tensor = nvcv::TensorWrapData(output_data);
 }
 
+// 保存 Assimp mesh 与相机内参；渲染缓冲按最大候选数预分配。
 FoundationPoseRenderer::FoundationPoseRenderer(std::shared_ptr<BaseMeshLoader> mesh_loader,
                                                const Eigen::Matrix3f          &intrinsic,
                                                const int                       input_poses_num,
@@ -380,6 +381,7 @@ bool FoundationPoseRenderer::PrepareBuffer()
 
 bool FoundationPoseRenderer::LoadTexturedMesh()
 {
+  // 将 mesh 顶点、法线、面和纹理上传 GPU，供 nvdiffrast 光栅化。
   const auto &mesh_model_center   = mesh_loader_->GetMeshModelCenter();
   const auto &mesh_vertices       = mesh_loader_->GetMeshVertices();
   const auto &mesh_vertex_normals = mesh_loader_->GetMeshVertexNormals();
@@ -608,6 +610,7 @@ bool FoundationPoseRenderer::GeneratePoseClipOnCUDA(cudaStream_t stream,
   return true;
 }
 
+// nvdiffrast 光栅化/插值/纹理采样生成合成 RGB 与 XYZ。
 bool FoundationPoseRenderer::NvdiffrastRender(cudaStream_t                        cuda_stream,
                                               const std::vector<Eigen::MatrixXf> &poses,
                                               const Eigen::Matrix3f              &K,
@@ -682,6 +685,7 @@ bool FoundationPoseRenderer::NvdiffrastRender(cudaStream_t                      
   return true;
 }
 
+// 渲染候选视角并拼成 scorer/refiner 的 render_input。
 bool FoundationPoseRenderer::RenderProcess(cudaStream_t                        cuda_stream,
                                            const std::vector<Eigen::MatrixXf> &poses,
                                            const std::vector<RowMajorMatrix>  &tfs,
@@ -728,6 +732,7 @@ bool FoundationPoseRenderer::RenderProcess(cudaStream_t                        c
   return true;
 }
 
+// CV-CUDA WarpPerspective 裁剪真实 RGB/XYZ，生成 transf_input。
 bool FoundationPoseRenderer::TransfProcess(cudaStream_t                       cuda_stream,
                                            void                              *rgb_on_device,
                                            void                              *xyz_map_on_device,
@@ -811,6 +816,7 @@ bool FoundationPoseRenderer::TransfProcess(cudaStream_t                       cu
   return true;
 }
 
+// 对每个候选按投影尺寸求 crop 变换，并同步产出两组 6 通道张量。
 bool FoundationPoseRenderer::RenderAndTransform(const std::vector<Eigen::Matrix4f> &_poses,
                                                 void                               *rgb_on_device,
                                                 void                               *depth_on_device,

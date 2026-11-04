@@ -18,6 +18,8 @@
 #include <cstdio>
 #include "foundationpose_sampling.cu.hpp"
 
+// FoundationPoseSampler::GetHypPoses 调用这些 GPU 深度滤波器，清除边界异常值后估计初始平移。
+
 __global__ void erode_depth_kernel(float *depth,
                                    float *out,
                                    int    H,
@@ -27,6 +29,7 @@ __global__ void erode_depth_kernel(float *depth,
                                    float  ratio_thres,
                                    float  zfar)
 {
+  // 邻域内不连续/无效像素比例过高时将中心深度置零。
   int h = blockIdx.y * blockDim.y + threadIdx.y;
   int w = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -84,6 +87,7 @@ __global__ void erode_depth_kernel(float *depth,
 __global__ void bilateral_filter_depth_kernel(
     float *depth, float *out, int H, int W, float zfar, int radius, float sigmaD, float sigmaR)
 {
+  // 联合空间距离与深度差加权，保留局部深度边界。
   int h = blockIdx.y * blockDim.y + threadIdx.y;
   int w = blockIdx.x * blockDim.x + threadIdx.x;
 

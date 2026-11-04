@@ -189,6 +189,7 @@ cv::Mat clip_float01(const cv::Mat& input) {
 
 }  // namespace
 
+// 用视差 fx*baseline/Z 在右图找对应像素，比较左右局部外观。
 cv::Mat compute_photometric_confidence(
     const cv::Mat& left_img,
     const cv::Mat& right_img,
@@ -264,6 +265,7 @@ cv::Mat compute_photometric_confidence(
 }
 
 cv::Mat compute_texture_confidence(const cv::Mat& left_img_gray, int ksize) {
+    // 弱纹理区域的匹配不可靠，置信度随局部梯度减小。
     if (left_img_gray.empty()) {
         return {};
     }
@@ -296,6 +298,7 @@ cv::Mat compute_texture_confidence(const cv::Mat& left_img_gray, int ksize) {
     return robust_normalize(texture, kPercentile10, kPercentile90);
 }
 
+// 深度边缘与图像边缘不一致的位置降低置信度。
 cv::Mat compute_depth_edge_confidence(
     const cv::Mat& depth,
     const cv::Mat& left_img_gray,
@@ -354,6 +357,7 @@ cv::Mat compute_depth_edge_confidence(
     return confidence;
 }
 
+// 与上一帧深度逐像素比较；无前帧时返回中性置信度。
 cv::Mat compute_temporal_confidence_simple(
     const cv::Mat& depth,
     const cv::Mat& depth_prev,
@@ -391,6 +395,7 @@ cv::Mat compute_temporal_confidence_simple(
     return confidence;
 }
 
+// 四项置信度按权重相乘；无效深度在平滑后仍强制置零。
 cv::Mat compute_confidence_map(
     const cv::Mat& left_img,
     const cv::Mat& right_img,
@@ -454,6 +459,7 @@ cv::Mat compute_confidence_map(
     return clip_float01(confidence);
 }
 
+// 返回新深度图；原始 depth 不会被改写。
 cv::Mat filter_depth_with_confidence(
     const cv::Mat& depth,
     const cv::Mat& conf,

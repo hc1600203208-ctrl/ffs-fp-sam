@@ -8,15 +8,20 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
+# 阅读主线：本文件 -> sam/src/grounded_sam_multi_first_mask_node.cpp (首帧掩码)
+# -> fp/src/foundationpose_cpp/src/foundationpose_stereo_tracker_multi_node.cpp (深度与位姿)。
+# 两个节点共享 YAML；掩码 PNG 是它们之间的实际数据接口。
 
 _MASK_IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
 
 
 def _is_true(value):
+    # OpaqueFunction 收到的是 launch 替换后的字符串，需自行解析布尔值。
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _clean_first_mask_output_dir(context, *args, **kwargs):
+    # launch 执行期解析 LaunchConfiguration；仅清除旧图像，避免 tracker 读到上次运行的掩码。
     if not _is_true(kwargs["run_first_mask"].perform(context)):
         return []
 
@@ -34,6 +39,7 @@ def _clean_first_mask_output_dir(context, *args, **kwargs):
 
 
 def generate_launch_description():
+    # 声明参数发生在生成描述时；LaunchConfiguration 的值到实际启动时才求值。
     params_file = LaunchConfiguration("params_file")
     run_first_mask = LaunchConfiguration("run_first_mask")
     left_image_topic = LaunchConfiguration("left_image_topic")
@@ -44,6 +50,9 @@ def generate_launch_description():
     enable_profiling = LaunchConfiguration("enable_profiling")
     profiling_log_interval_frames = LaunchConfiguration("profiling_log_interval_frames")
     enable_depth_confidence_filter = LaunchConfiguration("enable_depth_confidence_filter")
+    publish_visualization = LaunchConfiguration("publish_visualization")
+    publish_depth_visualization = LaunchConfiguration("publish_depth_visualization")
+    depth_visualization_fps = LaunchConfiguration("depth_visualization_fps")
 
     # The tracker links against both its package-local shared libraries and
     # the package-level detection library.  Keep these directories ahead of
@@ -78,6 +87,9 @@ def generate_launch_description():
         DeclareLaunchArgument("input_width", default_value="640"),
         DeclareLaunchArgument("input_height", default_value="480"),
         DeclareLaunchArgument("box_threshold", default_value="0.3"),
+        DeclareLaunchArgument("publish_visualization", default_value="false"),
+        DeclareLaunchArgument("publish_depth_visualization", default_value="false"),
+        DeclareLaunchArgument("depth_visualization_fps", default_value="5.0"),
         DeclareLaunchArgument(
             "enable_profiling",
             default_value="false",
@@ -96,6 +108,7 @@ def generate_launch_description():
     ]
 
     clean_first_mask_output_dir = OpaqueFunction(
+        # OpaqueFunction 在 Node 动作前执行，返回空动作列表即可。
         function=_clean_first_mask_output_dir,
         kwargs={
             "run_first_mask": run_first_mask,
@@ -104,11 +117,13 @@ def generate_launch_description():
     )
 
     first_mask_node = Node(
+        # launch_ros 根据 package/executable 查找已安装的 ROS 2 可执行文件。
         package="grounded_sam_trt",
         executable="grounded_sam_multi_first_mask_node",
         name="grounded_sam_multi_first_mask_node",
         output="screen",
         condition=IfCondition(run_first_mask),
+        # 后面的字典覆盖同名 YAML 参数；ParameterValue 防止数字被当作字符串。
         parameters=[
             params_file,
             {
@@ -122,6 +137,7 @@ def generate_launch_description():
     )
 
     tracker_node = Node(
+        # tracker 与 SAM 同时启动；tracker 持续轮询所有 PNG，齐备后才注册目标。
         package="foundationpose_cpp",
         executable="foundationpose_stereo_tracker_multi_node",
         name="foundationpose_stereo_tracker_multi_node",
@@ -131,6 +147,9 @@ def generate_launch_description():
             params_file,
             {"mask_image_directory": first_mask_output_dir},
             {
+                "publish_visualization": ParameterValue(publish_visualization, value_type=bool),
+                "publish_depth_visualization": ParameterValue(publish_depth_visualization, value_type=bool),
+                "depth_visualization_fps": ParameterValue(depth_visualization_fps, value_type=float),
                 "enable_profiling": ParameterValue(enable_profiling, value_type=bool),
                 "profiling_log_interval_frames": ParameterValue(
                     profiling_log_interval_frames, value_type=int
@@ -143,5 +162,6 @@ def generate_launch_description():
     )
 
     return launch.LaunchDescription(
+        # 顺序保证清理动作先执行，但不保证两个节点的首帧处理顺序。
         launch_args + [clean_first_mask_output_dir, first_mask_node, tracker_node]
     )

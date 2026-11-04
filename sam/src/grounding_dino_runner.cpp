@@ -12,6 +12,8 @@
 
 namespace grounded_sam {
 
+// DINO 层：RGB -> 模型输入张量 -> pred_logits/pred_boxes -> 原图像素坐标框。
+
 namespace {
 
 float sigmoid(float x) {
@@ -134,6 +136,7 @@ std::vector<Detection> postprocessDinoOutputs(const std::vector<float>& logits,
                                               const std::vector<int64_t>& boxes_shape,
                                               int image_w, int image_h,
                                               float box_threshold, int max_detections) {
+  // [1, queries, tokens] logits 取每个 query 的最大 token 分数；boxes 为归一化 cxcywh。
   if (logits_shape.size() != 3 || boxes_shape.size() != 3 || boxes_shape[2] != 4) {
     throw std::runtime_error("Unexpected DINO output shapes: logits=" +
                              dimsToString(logits_shape) + " boxes=" +
@@ -195,6 +198,7 @@ GroundingDinoRunner::GroundingDinoRunner(const std::string& engine_path)
 
 GroundingDinoRunner::GroundingDinoRunner(const std::string& engine_path,
                                          const std::string& onnx_path) {
+  // 本 launch 的 YAML 指向 .engine，走 TensorRT；配置 ONNX 路径时才走可选 ORT 分支。
   const bool use_onnxruntime = !onnx_path.empty() || pathLooksLikeOnnx(engine_path);
   const std::string model_path = !onnx_path.empty() ? onnx_path : engine_path;
 
@@ -214,6 +218,7 @@ GroundingDinoRunner::GroundingDinoRunner(const std::string& engine_path,
     backend_ = Backend::TensorRT;
     engine_ = std::make_unique<TrtEngine>(engine_path);
     engine_->setInputShape("images", nvinfer1::Dims4{1, 3, input_h_, input_w_});
+    // setInputShape 为动态 TensorRT engine 指定本次运行的 NCHW 尺寸。
     if (engine_->hasTensor("masks")) {
       nvinfer1::Dims mask_dims;
       mask_dims.nbDims = 3;
@@ -236,6 +241,7 @@ std::vector<Detection> GroundingDinoRunner::detect(const cv::Mat& rgb, float box
 std::vector<Detection> GroundingDinoRunner::detectWithTensorRt(const cv::Mat& rgb,
                                                                float box_threshold,
                                                                int max_detections) {
+  // preprocessForDino 做 resize/pad、RGB 归一化及 HWC->CHW；mask 标记补边区域。
   auto prep = preprocessForDino(rgb, input_h_, input_w_);
   auto& image_tensor = engine_->tensor("images");
   copyFloatToTensor(image_tensor, prep.chw.data(), prep.chw.size());
@@ -246,6 +252,7 @@ std::vector<Detection> GroundingDinoRunner::detectWithTensorRt(const cv::Mat& rg
   }
 
   engine_->infer();
+  // TrtEngine::infer 负责 H2D、enqueueV3、D2H 和流同步。
 
   const auto& logits_buf = engine_->tensor("pred_logits");
   const auto& boxes_buf = engine_->tensor("pred_boxes");
@@ -264,6 +271,7 @@ std::vector<Detection> GroundingDinoRunner::detectWithTensorRt(const cv::Mat& rg
 std::vector<Detection> GroundingDinoRunner::detectWithOnnxRuntime(const cv::Mat& rgb,
                                                                   float box_threshold,
                                                                   int max_detections) {
+  // 可选路径：Ort::Session::Run 使用 CPU 张量，后处理与 TensorRT 路径共用。
 #ifdef GROUNDED_SAM_WITH_ONNXRUNTIME
   auto prep = preprocessForDino(rgb, input_h_, input_w_);
   std::array<int64_t, 4> input_shape{1, 3, input_h_, input_w_};

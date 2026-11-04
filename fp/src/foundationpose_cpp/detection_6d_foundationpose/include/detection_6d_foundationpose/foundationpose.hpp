@@ -25,10 +25,10 @@ public:
    *
    * @param rgb Input RGB image (must be in RGB format, convert if using opencv-imread's default
    * BGR)
-   * @param depth Depth image (CV_32FC1 format)
+   * @param depth Depth image (CV_32FC1 format, metres, aligned with RGB)
    * @param mask Object mask (CV_8UC1 format, positive pixels > 0)
    * @param target_name Object category name (must match construction mapping)
-   * @param out_pose_in_mesh Output pose in the original mesh coordinate frame, matching official Python FoundationPose
+   * @param out_pose_in_mesh Mesh-to-camera transform in the original mesh coordinate frame, matching official Python FoundationPose
    * @param refine_itr Refinement process iteration num
    * @return true Registration successful
    * @return false Registration failed
@@ -43,12 +43,12 @@ public:
   /**
    * @brief Track object pose from subsequent frames (lightweight version of Register)
    *
-   * @note Requires prior successful Register call
+   * @note Requires a mesh-frame pose hypothesis, usually produced by Register in a separate instance
    *       - Lower accuracy but higher efficiency than Register
    *       - Accepts pose hypotheses from external sources
    *
    * @param rgb Input RGB image (must be in RGB format)
-   * @param depth Depth image (CV_32FC1 format)
+   * @param depth Depth image (CV_32FC1 format, metres, aligned with RGB)
    * @param hyp_pose_in_mesh Hypothesis pose in the original mesh coordinate frame (from Register or other sources)
    * @param target_name Object category name (must match construction mapping)
    * @param out_pose_in_mesh Output pose in the original mesh coordinate frame, matching official Python FoundationPose

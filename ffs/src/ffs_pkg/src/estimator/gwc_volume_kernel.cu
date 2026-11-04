@@ -8,6 +8,8 @@
 
 #include "cuda_utils.h"
 
+// 这些 CUDA kernel 由 FastFoundationStereoEstimator::infer 调用，不是 ROS 节点。
+
 
 __global__ void preprocess_rgb_to_planar_kernel(
     const uint8_t* __restrict__ src, 
@@ -47,6 +49,7 @@ void LaunchPreprocessKernel(
     const uint8_t* d_src, float* d_dst, 
     int width, int height, cudaStream_t stream) 
 {
+    // FFS_PREPROCESS_MODE 可改模型输入归一化；默认与特征网络训练时的 ImageNet 归一化一致。
     dim3 block(16, 16);
     dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
 
@@ -104,6 +107,7 @@ __global__ void gwc_volume_kernel_simple(
     bool normalize,
     bool reverse_shift)
 {
+    // 输出 [G,D,H,W]；每个线程计算一个组/视差/像素的平均相关值。
     int C_g = C / G;
     
     int w = blockIdx.x * blockDim.x + threadIdx.x;
@@ -174,6 +178,7 @@ void LaunchGwcVolumeKernel(
     bool reverse_shift,
     cudaStream_t stream)
 {
+    // 当前实现只支持 batch=1；调用者需保证 C 能被 G 整除。
     // Assert batch size is 1
     if (B != 1) {
         //printf("Warning: Batch size should be 1, got %d\n", B);

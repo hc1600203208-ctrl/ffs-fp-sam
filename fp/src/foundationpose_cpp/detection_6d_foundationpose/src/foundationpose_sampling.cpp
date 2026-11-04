@@ -55,6 +55,7 @@ int GetMiddlePoint(int                           i,
 // Initial triangle values could found from https://sinestesia.co/blog/tutorials/python-icospheres/
 std::vector<Eigen::Vector3f> GenerateIcosphere(unsigned int n_views)
 {
+  // 细分二十面体，得到覆盖观察方向的近似均匀球面点。
   std::map<int64_t, int>       cache;
   std::vector<Eigen::Vector3f> vertices;
   std::vector<Eigen::Vector3i> faces;
@@ -211,6 +212,7 @@ std::vector<Eigen::Matrix4f> SampleViewsIcosphere(unsigned int n_views)
  */
 std::vector<Eigen::Matrix4f> MakeRotationGrid(unsigned int n_views = 40, int inplane_step = 60)
 {
+  // 将球面视向与面内旋转组合，构成 Register 的初始姿态网格。
   auto cam_in_obs = SampleViewsIcosphere(n_views);
 
   std::vector<Eigen::Matrix4f> rot_grid;
@@ -247,6 +249,7 @@ std::vector<Eigen::Matrix4f> MakeRotationGrid(unsigned int n_views = 40, int inp
  * @return true
  * @return false
  */
+// 从 mask 内有效深度估计物体中心平移，给旋转网格补上位置。
 bool GuessTranslation(const Eigen::MatrixXf  &depth,
                       const RowMajorMatrix8u &mask,
                       const Eigen::Matrix3f  &K,
@@ -341,6 +344,7 @@ FoundationPoseSampler::~FoundationPoseSampler()
   }
 }
 
+// 首帧采样入口：GPU 深度和 CPU mask -> 一组相机中的候选 4x4 位姿。
 bool FoundationPoseSampler::GetHypPoses(void                         *_depth_on_device,
                                         void                         *_mask_on_host,
                                         int                           input_image_height,

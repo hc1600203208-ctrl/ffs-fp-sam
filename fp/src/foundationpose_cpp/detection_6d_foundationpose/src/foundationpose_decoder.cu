@@ -23,6 +23,7 @@
 // This function will find the index with the maximum score
 int getMaxScoreIndex(cudaStream_t cuda_stream, float *scores, int N)
 {
+  // Thrust 在给定 CUDA stream 上对 device 分数数组求 argmax，返回候选下标。
   // Wrap raw pointers with device pointers
   thrust::device_ptr<float> dev_scores(scores);
   // Find the maximum score

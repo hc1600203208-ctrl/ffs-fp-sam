@@ -14,6 +14,8 @@
 namespace foundationpose_profiling
 {
 
+// tracker 回调的纯统计辅助模块；不改变位姿或深度，只累计耗时与丢帧计数。
+
 inline double MillisecondsBetween(const std::chrono::steady_clock::time_point &start,
                                   const std::chrono::steady_clock::time_point &end)
 {
@@ -55,6 +57,7 @@ struct TimingStats
 
 struct DepthTimingBreakdown
 {
+  // BuildDepthFromStereo 填写各阶段；单位统一为毫秒。
   double remap_prepare_ms{0.0};
   double ffs_depth_estimation_ms{0.0};
   double depth_validity_filter_ms{0.0};
@@ -64,6 +67,7 @@ struct DepthTimingBreakdown
 
 struct TrackingFrameTiming
 {
+  // RunTracking 填写调度、模型、滤波和整帧耗时，再由 RecordTrackingFrame 汇总。
   double end_to_end_ms{0.0};
   double ffs_depth_estimation_ms{0.0};
   double depth_validity_filter_ms{0.0};
@@ -85,6 +89,7 @@ public:
                   double max_sync_interval_sec,
                   const std::vector<std::string> &object_names)
   {
+    // profiling 关闭时仍保留计数接口；ShouldLog 控制周期报告。
     enabled_ = enabled;
     log_interval_frames_ = log_interval_frames == 0 ? 30 : log_interval_frames;
     sync_queue_size_ = sync_queue_size;

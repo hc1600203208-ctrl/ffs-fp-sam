@@ -9,9 +9,12 @@
 
 namespace grounded_sam {
 
+// SAM 层：每帧图像只编码一次 embedding；每个 DINO 框单独解码后合并。
+
 SamRunner::SamRunner(const std::string& image_encoder_engine, const std::string& mask_decoder_engine)
     : encoder_(std::make_unique<TrtEngine>(image_encoder_engine)),
       decoder_(std::make_unique<TrtEngine>(mask_decoder_engine)) {
+  // 固定 engine 的输入张量名与尺寸；point_labels 中 2/3 表示 SAM 的框两角。
   encoder_->setInputShape("image", nvinfer1::Dims4{1, 3, input_side_, input_side_});
   decoder_->setInputShape("image_embeddings", nvinfer1::Dims4{1, 256, 64, 64});
   decoder_->setInputShape("point_coords", nvinfer1::Dims3{1, 2, 2});
@@ -24,6 +27,7 @@ SamRunner::SamRunner(const std::string& image_encoder_engine, const std::string&
 }
 
 std::vector<float> SamRunner::encodeImage(const cv::Mat& rgb, SamPreprocessResult& prep) {
+  // 返回编码器 image_embeddings，prep 记录缩放尺寸供框坐标和掩码逆变换。
   prep = preprocessForSam(rgb, input_side_);
   auto& input = encoder_->tensor("image");
   copyFloatToTensor(input, prep.chw.data(), prep.chw.size());
@@ -36,6 +40,7 @@ std::vector<float> SamRunner::encodeImage(const cv::Mat& rgb, SamPreprocessResul
 cv::Mat SamRunner::decodeOneBox(const std::vector<float>& embedding,
                                 const SamPreprocessResult& prep,
                                 const cv::Rect2f& box) {
+  // DINO 框在原图像素坐标系，乘 prep.scale 后成为 SAM 输入坐标。
   auto& embeddings = decoder_->tensor("image_embeddings");
   copyFloatToTensor(embeddings, embedding.data(), embedding.size());
 
@@ -57,6 +62,7 @@ cv::Mat SamRunner::decodeOneBox(const std::vector<float>& embedding,
   std::fill(has_mask_input_tensor.host.begin(), has_mask_input_tensor.host.end(), 0);
 
   decoder_->infer();
+  // low_res_masks 为 256x256 logits；0 阈值后生成原图尺寸 0/255 PNG 掩码。
 
   const auto& mask_tensor = decoder_->tensor("low_res_masks");
   const std::vector<float> logits = tensorToFloatVector(mask_tensor);
@@ -82,6 +88,7 @@ cv::Mat SamRunner::decodeOneBox(const std::vector<float>& embedding,
 }
 
 cv::Mat SamRunner::segment(const cv::Mat& rgb, const std::vector<Detection>& detections) {
+  // 无检测时返回全黑掩码，tracker 会拒绝注册并在下一帧轮询。
   cv::Mat merged(rgb.rows, rgb.cols, CV_8UC1, cv::Scalar(0));
   if (detections.empty()) return merged;
 

@@ -9,6 +9,8 @@
 
 namespace grounded_sam {
 
+// 图像预处理及坐标转换工具；ROS 入口使用 RosImageToRgb，readRgbImage 供离线程序使用。
+
 cv::Mat readRgbImage(const std::string& path) {
   cv::Mat image = cv::imread(path, cv::IMREAD_UNCHANGED);
   if (image.empty()) {
@@ -28,6 +30,7 @@ cv::Mat readRgbImage(const std::string& path) {
 }
 
 DinoPreprocessResult preprocessForDino(const cv::Mat& rgb, int target_h, int target_w) {
+  // 保持纵横比 resize，右/下补零；ImageNet 均值方差归一化为 NCHW float。
   DinoPreprocessResult out;
   out.original_h = rgb.rows;
   out.original_w = rgb.cols;
@@ -71,6 +74,7 @@ DinoPreprocessResult preprocessForDino(const cv::Mat& rgb, int target_h, int tar
 }
 
 SamPreprocessResult preprocessForSam(const cv::Mat& rgb, int target_side) {
+  // 最长边缩放到 target_side，右/下补零；沿用 SAM 的像素均值/标准差。
   SamPreprocessResult out;
   out.original_h = rgb.rows;
   out.original_w = rgb.cols;
@@ -98,6 +102,7 @@ SamPreprocessResult preprocessForSam(const cv::Mat& rgb, int target_side) {
 }
 
 cv::Rect2f dinoCxcywhToOriginalXyxy(const float* box, int original_w, int original_h) {
+  // DINO 归一化中心框 -> 原图像素矩形；后续再由 clampBox 截到图像内。
   const float cx = box[0] * original_w;
   const float cy = box[1] * original_h;
   const float w = box[2] * original_w;

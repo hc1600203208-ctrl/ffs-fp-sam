@@ -12,6 +12,7 @@
 #include <opencv2/imgproc.hpp>
 
 struct StereoCalibration {
+    // caminfo.txt 的左右内参/畸变与右相机相对左相机的外参；平移/基线单位为米。
     cv::Matx33d k_left = cv::Matx33d::eye();
     cv::Matx33d k_right = cv::Matx33d::eye();
     cv::Vec<double, 5> dist_left = cv::Vec<double, 5>::all(0.0);
@@ -22,6 +23,7 @@ struct StereoCalibration {
 };
 
 struct StereoRectificationMaps {
+    // left/right_map 用于原图 -> 整流图；left_inverse_map 用于深度回原始左图。
     cv::Size image_size;
     cv::Mat left_map_x;
     cv::Mat left_map_y;
@@ -40,6 +42,7 @@ inline bool LoadStereoCalibrationFromTxt(
     const std::string& path,
     StereoCalibration* calibration,
     std::string* error_message = nullptr) {
+    // 按固定顺序读取 41 个数：左 K、基线/畸变、右 K/畸变、R、T。
     if (calibration == nullptr) {
         if (error_message != nullptr) {
             *error_message = "StereoCalibration output pointer is null.";
@@ -145,6 +148,7 @@ inline bool ComputeStereoRectificationMaps(
     const cv::Size& image_size,
     StereoRectificationMaps* maps,
     std::string* error_message = nullptr) {
+    // stereoRectify 生成 R1/R2/P1/P2；initUndistortRectifyMap 生成 cv::remap 的采样表。
     if (maps == nullptr) {
         if (error_message != nullptr) {
             *error_message = "StereoRectificationMaps output pointer is null.";
@@ -213,6 +217,7 @@ inline bool ComputeStereoRectificationMaps(
     rectified_points.reserve(original_points.size());
 
     for (int y = 0; y < image_size.height; ++y) {
+        // undistortPoints 为每个原始左像素求整流坐标，供深度逆向采样。
         for (int x = 0; x < image_size.width; ++x) {
             original_points[static_cast<size_t>(x)] =
                 cv::Point2f(static_cast<float>(x), static_cast<float>(y));
@@ -243,6 +248,7 @@ inline cv::Mat AlignRectifiedDepthToOriginalLeft(
     const cv::Mat& rectified_depth,
     const StereoRectificationMaps& maps,
     int interpolation = cv::INTER_NEAREST) {
+    // 输出仍为 CV_32FC1 米制深度；最近邻避免在无效深度边缘插值。
     if (rectified_depth.empty()) {
         return {};
     }

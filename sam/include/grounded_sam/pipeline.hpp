@@ -17,6 +17,8 @@ struct PipelineOptions {
 class GroundedSamPipeline {
  public:
   explicit GroundedSamPipeline(const PipelineOptions& options);
+  std::vector<Detection> detect(const cv::Mat& rgb);
+  cv::Mat segment(const cv::Mat& rgb, const std::vector<Detection>& detections);
   cv::Mat run(const cv::Mat& rgb);
 
  private:

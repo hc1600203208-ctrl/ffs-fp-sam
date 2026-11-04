@@ -289,6 +289,7 @@ private:
   cv::Mat                      texture_map_;
 };
 
+// Assimp 读取 mesh/材质；直径、模型中心和朝向边界供采样、位姿尺度及可视化使用。
 AssimpMeshLoader::AssimpMeshLoader(const std::string &name, const std::string &mesh_file_path)
     : name_(name)
 {

@@ -122,6 +122,12 @@ The FoundationPose tracker still reads
 `first_mask_output_dir/first_mask.png`, while `/fisrt_mask` is available for
 ROS 2 consumers when `publish_mask_topic` is true.
 
+For the multi-object launch, the first-mask node checks every configured
+target with GroundingDINO on the same left image. If any target is missing, it
+waits for another image without running SAM or writing masks. Once all targets
+are detected, it segments them on that image; an empty SAM mask also causes it
+to wait and retry. It stops subscribing only after every mask is ready.
+
 cd /home/hc/weizi/ffs+fp+sam/sam
 
 Download the BERT text encoder once before exporting GroundingDINO on machines

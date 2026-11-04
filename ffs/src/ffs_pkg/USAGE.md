@@ -101,6 +101,24 @@ matching distribution before FFS's iterative disparity refinement; it is not
 a calibrated probability that the final depth is correct.
 The external-filter result in `depth_filter` is independent of this output.
 
+The offline launch accepts the combined depth-confidence filter settings used
+for `output_subdir` (`depth_filter` by default). For example:
+
+```bash
+ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
+  dataset_root:=/home/hc/dataset/myobject/blue_fast \
+  caminfo_path:=/home/hc/weizi/ffs+fp+sam/ffs/jr714.txt \
+  conf_threshold:=0.50 \
+  sigma_photo:=0.10 \
+  w_photo:=0.50
+```
+
+Available launch arguments are `patch_radius` (2), `texture_ksize` (5),
+`sigma_photo` (0.12), `sigma_e` (0.15), `sigma_t` (0.02 m), `alpha_edge` (0.8),
+`w_photo` (0.45), `w_tex` (0.20), `w_grad` (0.20), `w_tmp` (0.15), and
+`conf_threshold` (0.35). `model_conf_threshold` separately controls the FFS
+internal matching-confidence output in `model_filtered_depth_subdir`.
+
 ```bash
 source /home/hc/weizi/ffs+fp+sam/ffs/install/setup.bash
 ros2 launch fast_foundation_stereo offline_stereo_depth.launch.py \
@@ -123,15 +141,37 @@ To rebuild the prob-enabled engine from an existing post-runner ONNX:
 
 ## Depth Inspector
 
-Use the standalone depth inspection tool to visually compare RGB and saved depth results frame by frame.
-The viewer shows the RGB image and a colorized depth map side by side, and updates the hovered pixel's
-RGB value and depth value in real time.
+Use the standalone depth inspection tool to compare one RGB directory with one or more depth directories.
+Frames are paired by the filename stem common to every directory. The RGB and depth panels appear in
+a grid, and hovering over a panel shows its pixel value. The first depth directory is the reference:
+its full-frame depth range colors every full-frame depth panel.
+
+Drag a rectangle on any RGB or depth panel to select the same region in all depth images. The ROI
+view finds the majority depth cluster in the **first** depth image, then applies that exact color
+range to every depth ROI. Sparse transition depths and larger depth gaps mark the cluster boundary.
+Background outside the reference target range appears gray; invalid depth appears black.
+The default maximum gap within the target cluster is 0.5 m; adjust it with
+`--roi-target-gap-meters` if needed. Right-click inside the ROI on any main-view panel to center a
+fixed color range on the corresponding pixel in the **first** depth image. Its default span is 0.5 m
+and can be set with `--roi-focus-span-meters`.
 
 ```bash
 python3 src/ffs_pkg/scripts/depth_inspector.py \
   --rgb-dir /home/hc/weizi/dataset/jrnew-blue/rgb \
   --depth-dir /home/hc/weizi/dataset/jrnew-blue/depth \
   --depth-scale 1000.0
+```
+
+To compare several results for the same RGB frames, pass all depth directories after one `--depth-dir`:
+
+```bash
+python3 src/ffs_pkg/scripts/depth_inspector.py \
+  --rgb-dir /home/hc/weizi/dataset/jrnew-blue/rgb \
+  --depth-dir \
+    /home/hc/weizi/dataset/jrnew-blue/evaluate/depth_benchmark/raw_depth \
+    /home/hc/weizi/dataset/jrnew-blue/evaluate/depth_benchmark/confnet/otb_threshold_0_5 \
+    /home/hc/weizi/dataset/jrnew-blue/evaluate/depth_benchmark/ffs_internal/threshold_0_5 \
+    /home/hc/weizi/dataset/jrnew-blue/evaluate/depth_benchmark/confidence_full_threshold_sweep/threshold_0_35
 ```
 
 After installation you can also run:
@@ -145,7 +185,12 @@ After installation you can also run:
 Viewer controls:
 - `A` or left arrow: previous frame
 - `D` or right arrow: next frame
-- `S`: save the current viewer screenshot next to the depth image
+- Drag the left mouse button on any main-view panel: select the shared ROI and open its detail window
+- Right-click the target inside the ROI: focus the shared color range on reference depth
+- `+` / `-`: halve / double the ROI depth span around its current center
+- `C`: restore the ROI's automatic target depth range
+- `R`: clear the ROI
+- `S`: save the main screenshot and, when present, the ROI detail in the first depth directory
 - `Q` or `Esc`: quit
 
 

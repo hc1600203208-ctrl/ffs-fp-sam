@@ -16,6 +16,8 @@
 
 namespace inference_core {
 
+// FoundationPose 的 TRT 后端；BaseInferCore::SyncInfer 从缓冲池取/用张量并顺序调用以下三阶段。
+
 class TensorrtLogger : public nvinfer1::ILogger {
 public:
   void log(Severity severity, const char *msg) noexcept override
@@ -184,6 +186,7 @@ TrtInferCore::~TrtInferCore()
 
 void TrtInferCore::LoadEngine(const std::string &engine_path)
 {
+  // 注册 TensorRT 插件后反序列化 engine；不同 TRT/GPU 架构的 engine 不能直接互换。
   initLibNvInferPlugins(nullptr, "");
 
   std::ifstream file(engine_path, std::ios::binary);
@@ -295,6 +298,7 @@ std::unique_ptr<BlobsTensor> TrtInferCore::AllocBlobsBuffer()
 
 bool TrtInferCore::PreProcess(std::shared_ptr<async_pipeline::IPipelinePackage> pipeline_unit)
 {
+  // 按 DataLocation 将 host 输入准备到 device；FP 的 render/transf 输入已在 device。
   CHECK_STATE(pipeline_unit != nullptr, "[TrtInferCore] PreProcess got invalid pipeline_unit!");
   auto blobs_tensor = pipeline_unit->GetInferBuffer();
   CHECK_STATE(blobs_tensor != nullptr, "[TrtInferCore] PreProcess got invalid blobs_tensor!");
@@ -322,6 +326,7 @@ bool TrtInferCore::PreProcess(std::shared_ptr<async_pipeline::IPipelinePackage> 
 
 bool TrtInferCore::Inference(std::shared_ptr<async_pipeline::IPipelinePackage> pipeline_unit)
 {
+  // 按调用线程获取 execution context、绑定张量地址，再 enqueueV3 执行网络。
   // Create tensorrt context if this is the first time execution of this thread.
   std::thread::id cur_thread_id = std::this_thread::get_id();
   if (s_map_tid2context_.find(cur_thread_id) == s_map_tid2context_.end())
@@ -372,6 +377,7 @@ bool TrtInferCore::Inference(std::shared_ptr<async_pipeline::IPipelinePackage> p
 
 bool TrtInferCore::PostProcess(std::shared_ptr<async_pipeline::IPipelinePackage> pipeline_unit)
 {
+  // 仅将被标记为 host 的输出拷回 CPU；scorer 分数可留在 device 做 CUDA 归约。
   CHECK_STATE(pipeline_unit != nullptr, "[TrtInferCore] PostProcess got invalid pipeline_unit!");
   auto blobs_tensor = pipeline_unit->GetInferBuffer();
   CHECK_STATE(blobs_tensor != nullptr, "[TrtInferCore] PostProcess got invalid blobs_tensor!");

@@ -19,6 +19,7 @@ ros2_install/
 *.out
 *.csv
 compile_commands.json
+*.md
 
 # Python and tool caches
 __pycache__/

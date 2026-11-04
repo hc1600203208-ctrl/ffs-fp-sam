@@ -92,7 +92,7 @@ grounded_sam_multi_first_mask_node:
     input_width: 640
     input_height: 480
     box_threshold: 0.3
-    max_detections: 16
+    max_detections: 1
 
 foundationpose_stereo_tracker_multi_node:
   ros__parameters:
@@ -132,7 +132,12 @@ foundationpose_stereo_tracker_multi_node:
     visualization_topic: /foundationpose/multi_visualization
     visualization_window_name: foundationpose_multi_visualization
     publish_visualization: false
-    show_visualization_window: true
+    show_visualization_window: false
+    publish_depth_visualization: false
+    publish_combined_visualization: true
+    combined_visualization_topic: /foundationpose/combined_visualization
+    depth_visualization_topic: /foundationpose/depth_image
+    depth_visualization_fps: 5.0
     enable_pose_smoothing: true
     pose_smoothing_translation_alpha: 0.45
     pose_smoothing_rotation_alpha: 0.45

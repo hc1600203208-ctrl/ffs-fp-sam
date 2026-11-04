@@ -9,6 +9,8 @@
 
 namespace detection_6d {
 
+// FP 核心：Register 由掩码产生多个初始假设并评分；Track 用上一帧位姿只做迭代细化。
+
 class FoundationPose : public Base6DofDetectionModel {
 public:
   /**
@@ -122,6 +124,7 @@ FoundationPose::FoundationPose(std::shared_ptr<inference_core::BaseInferCore>   
       crop_window_H_(crop_window_H),
       crop_window_W_(crop_window_W)
 {
+  // GetBuffer(true) 从 deploy_core 缓冲池取得张量；检查 engine 张量名是否匹配模型接口。
   // Check
   auto refiner_blobs_buffer = refiner_core->GetBuffer(true);
   auto scorer_blobs_buffer  = scorer_core->GetBuffer(true);
@@ -157,6 +160,7 @@ bool FoundationPose::CheckInputArguments(const cv::Mat     &rgb,
                                          const cv::Mat     &mask,
                                          const std::string &target_name)
 {
+  // RGB、米制 depth、可选 mask 必须同尺寸；内参对应原始左图分辨率。
   const int r_rows = rgb.rows, r_cols = rgb.cols;
   const int d_rows = depth.rows, d_cols = depth.cols;
   const int m_rows = mask.empty() ? d_rows : mask.rows, m_cols = mask.empty() ? d_cols : mask.cols;
@@ -185,6 +189,7 @@ bool FoundationPose::Register(const cv::Mat     &rgb,
                               Eigen::Matrix4f   &out_pose_in_mesh,
                               size_t             refine_itr)
 {
+  // 首次注册：上传图像/深度 -> mask+depth 采样候选 -> refiner 迭代 -> scorer 选最高分。
   CHECK_STATE(CheckInputArguments(rgb, depth, mask, target_name),
               "[FoundationPose] `Register` Got invalid arguments!!!");
 
@@ -205,6 +210,7 @@ bool FoundationPose::Register(const cv::Mat     &rgb,
 
     MESSURE_DURATION_AND_CHECK_STATE(
         refiner_core_->SyncInfer(package->GetInferBuffer()),
+        // BaseInferCore::SyncInfer 顺序执行 TRT PreProcess/Inference/PostProcess。
         "[FoundationPose] SyncDetect Failed to execute refiner_core_->SyncInfer!!!");
 
     MESSURE_DURATION_AND_CHECK_STATE(
@@ -224,6 +230,7 @@ bool FoundationPose::Register(const cv::Mat     &rgb,
 
   const auto &mesh_loader = map_name2loaders_[target_name];
   out_pose_in_mesh        = ConvertPoseCenteredMesh2Mesh(package->actual_pose, mesh_loader);
+  // 网络内部使用以 mesh 中心为原点的坐标；对外改回原 mesh 坐标系。
 
   return true;
 }
@@ -235,6 +242,7 @@ bool FoundationPose::Track(const cv::Mat         &rgb,
                            Eigen::Matrix4f       &out_pose_in_mesh,
                            size_t                 refine_itr)
 {
+  // 后续帧：把上帧 mesh 位姿转内部中心坐标，仅跑 refiner，不再采样/评分。
   CHECK_STATE(CheckInputArguments(rgb, depth, cv::Mat(), target_name),
               "[FoundationPose] `Track` Got invalid arguments!!!");
 
@@ -271,6 +279,7 @@ bool FoundationPose::UploadDataToDevice(const cv::Mat     &rgb,
                                         const cv::Mat     &mask,
                                         const ParsingType &package)
 {
+  // CUDA 上传 RGB8 和 CV_32FC1 深度，并由深度+相机内参生成相机坐标 xyz_map。
   const int input_image_height = rgb.rows, input_image_width = rgb.cols;
   package->input_image_height = input_image_height;
   package->input_image_width  = input_image_width;
@@ -318,6 +327,7 @@ bool FoundationPose::UploadDataToDevice(const cv::Mat     &rgb,
 
 bool FoundationPose::RefinePreProcess(const ParsingType &package)
 {
+  // Register 首轮通过 sampler 生成假设；Track 已提供假设，不进入采样分支。
   // 1. sample
   if (package->hyp_poses.empty())
   {
@@ -340,6 +350,7 @@ bool FoundationPose::RefinePreProcess(const ParsingType &package)
   auto &refine_renderer = map_name2renderer_[package->target_name];
   CHECK_STATE(
       refine_renderer->RenderAndTransform(
+          // Renderer 为每个假设渲染 mesh，并裁剪真实 RGB/XYZ；两者组成 refiner 的 6 通道输入。
           package->hyp_poses, package->rgb_on_device.get(), package->depth_on_device.get(),
           package->xyz_map_on_device.get(), package->input_image_height, package->input_image_width,
           refiner_blobs_buffer->GetTensor(RENDER_INPUT_BLOB_NAME)->RawPtr(),
@@ -361,6 +372,7 @@ bool FoundationPose::RefinePreProcess(const ParsingType &package)
 
 bool FoundationPose::RefinePostProcess(const ParsingType &package)
 {
+  // 将网络预测的平移/旋转增量还原尺度，更新每个候选的 4x4 位姿。
   // 获取refiner模型的缓存指针
   const auto &refiner_blobs_buffer = package->refiner_blobs_buffer;
   const auto trans_ptr = refiner_blobs_buffer->GetTensor(REFINE_TRANS_OUT_BLOB_NAME)->Cast<float>();
@@ -409,6 +421,7 @@ bool FoundationPose::RefinePostProcess(const ParsingType &package)
 
 bool FoundationPose::ScorePreprocess(const ParsingType &package)
 {
+  // 注册阶段为细化后的全部候选再次生成 render/transf 裁剪，送入 scorer。
   auto scorer_blobs_buffer = scorer_core_->GetBuffer(false);
   // 获取对应的score_renderer
   // 设置推理前后blob输出的位置，这里输入输出都在device端
@@ -433,6 +446,7 @@ bool FoundationPose::ScorePreprocess(const ParsingType &package)
 
 bool FoundationPose::ScorePostProcess(const ParsingType &package)
 {
+  // getMaxScoreIndex 是 CUDA 归约接口；选择分数最高的候选作为注册输出。
   const auto &scorer_blobs_buffer = package->scorer_blobs_buffer;
   // 获取scorer模型的输出缓存指针
   const auto score_ptr = scorer_blobs_buffer->GetTensor(SCORE_OUTPUT_BLOB_NAME)->Cast<float>();

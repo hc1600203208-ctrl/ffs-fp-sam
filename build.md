@@ -12,9 +12,15 @@ colcon build --packages-select sim_stereo_cpp
 source install/setup.bash
 ros2 launch sim_stereo_cpp stereo_render_cpp.launch.py
 
+source /opt/ros/jazzy/setup.bash
+source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
+source /home/hc/weizi/ffs+fp+sam/sim/install/setup.bash
+python3 /home/hc/weizi/ffs+fp+sam/app/sim_stereo_multi_app.py
+
 cd /workspace/code/ffs+fp+sam/sam
 ./scripts/build_cpp.sh
 ./scripts/build_ros.sh
+./scripts/export_all.sh
 ./scripts/export_dino.sh
 
 cd /workspace/code/ffs+fp+sam/fp

@@ -29,6 +29,7 @@ std::vector<char> readBinaryFile(const std::string& path) {
 }  // namespace
 
 std::size_t volume(const nvinfer1::Dims& dims) {
+  // 所有维度已由 setInputShape 解析后才能计算元素个数。
   std::size_t result = 1;
   for (int i = 0; i < dims.nbDims; ++i) {
     if (dims.d[i] < 0) {
@@ -40,6 +41,7 @@ std::size_t volume(const nvinfer1::Dims& dims) {
 }
 
 std::size_t dataTypeSize(nvinfer1::DataType type) {
+  // host/device 缓冲按 TensorRT tensor dtype 的字节数分配。
   switch (type) {
     case nvinfer1::DataType::kFLOAT:
       return 4;
@@ -79,6 +81,7 @@ void checkCuda(cudaError_t code, const char* expr, const char* file, int line) {
 }
 
 void copyFloatToTensor(TensorBuffer& buffer, const float* src, std::size_t count) {
+  // 调用方传 float；按 engine 实际 dtype 写入 host 缓冲，infer 再上传 GPU。
   const std::size_t expected = volume(buffer.dims);
   if (count != expected) {
     throw std::runtime_error("Float tensor element count mismatch for " + buffer.name);
@@ -105,6 +108,7 @@ void copyFloatToTensor(TensorBuffer& buffer, const float* src, std::size_t count
 }
 
 void copyBoolToTensor(TensorBuffer& buffer, const std::uint8_t* src, std::size_t count) {
+  // DINO 的 padding mask 逻辑值由 uint8 输入转换为 engine 对应布尔张量。
   const std::size_t expected = volume(buffer.dims);
   if (count != expected) {
     throw std::runtime_error("Bool tensor element count mismatch for " + buffer.name);
@@ -131,6 +135,7 @@ void copyBoolToTensor(TensorBuffer& buffer, const std::uint8_t* src, std::size_t
 }
 
 std::vector<float> tensorToFloatVector(const TensorBuffer& buffer) {
+  // infer 同步后将不同 TensorRT 输出 dtype 统一转 float 供 CPU 后处理。
   const std::size_t expected = volume(buffer.dims);
   std::vector<float> out(expected);
   if (buffer.dtype == nvinfer1::DataType::kFLOAT) {
@@ -162,6 +167,7 @@ std::vector<float> tensorToFloatVector(const TensorBuffer& buffer) {
 }
 
 TrtEngine::TrtEngine(const std::string& engine_path) {
+  // TensorRT runtime 反序列化 .engine；execution context 保存动态形状和张量地址。
   const auto data = readBinaryFile(engine_path);
   runtime_.reset(nvinfer1::createInferRuntime(trtLogger()));
   if (!runtime_) throw std::runtime_error("Failed to create TensorRT runtime");
@@ -201,6 +207,7 @@ TrtEngine::~TrtEngine() {
 }
 
 void TrtEngine::setInputShape(const std::string& name, const nvinfer1::Dims& dims) {
+  // 动态维度确定后 refreshBuffers 才能按实际字节数分配 CUDA/host 缓冲。
   if (!context_->setInputShape(name.c_str(), dims)) {
     throw std::runtime_error("Failed to set input shape for " + name + " to " + dimsToString(dims));
   }
@@ -208,6 +215,7 @@ void TrtEngine::setInputShape(const std::string& name, const nvinfer1::Dims& dim
 }
 
 void TrtEngine::refreshBuffers() {
+  // TensorRT 10 的 name-based I/O：setTensorAddress 将张量名绑定到 device 指针。
   for (auto& item : tensors_) {
     auto& buffer = item.second;
     buffer.dims = context_->getTensorShape(buffer.name.c_str());
@@ -228,6 +236,7 @@ void TrtEngine::refreshBuffers() {
 }
 
 void TrtEngine::allocateTensor(TensorBuffer& buffer) {
+  // 动态形状变化时重分配两侧缓冲，保留当前 tensor 的实际字节数。
   const std::size_t bytes = volume(buffer.dims) * dataTypeSize(buffer.dtype);
   if (bytes == buffer.bytes && buffer.device) return;
   if (buffer.device) {
@@ -240,6 +249,7 @@ void TrtEngine::allocateTensor(TensorBuffer& buffer) {
 }
 
 void TrtEngine::infer() {
+  // 同一 CUDA stream 顺序执行上传、enqueueV3 和下载；同步后 host 输出才可读。
   for (auto& item : tensors_) {
     auto& buffer = item.second;
     if (buffer.mode == nvinfer1::TensorIOMode::kINPUT) {

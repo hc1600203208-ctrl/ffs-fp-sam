@@ -1,5 +1,6 @@
 #include "foundationpose_utils.cu.hpp"
 
+// 针孔反投影：(u-cx)*Z/fx、(v-cy)*Z/fy、Z，单位与深度一致。
 __global__ void convert_depth_to_xyz_map_kernel(const float *depth_on_device,
                                                 int          input_image_height,
                                                 int          input_image_width,

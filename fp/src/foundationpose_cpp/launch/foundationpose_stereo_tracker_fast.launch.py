@@ -81,7 +81,7 @@ def generate_launch_description():
         DeclareLaunchArgument("input_width", default_value="640"),
         DeclareLaunchArgument("input_height", default_value="480"),
         DeclareLaunchArgument("box_threshold", default_value="0.3"),
-        DeclareLaunchArgument("max_detections", default_value="16"),
+        DeclareLaunchArgument("max_detections", default_value="1"),
         DeclareLaunchArgument(
             "save_frame_outputs",
             default_value="false",
