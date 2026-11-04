@@ -59,9 +59,20 @@
 #     visualization_window_name: foundationpose_multi_visualization
 #     publish_visualization: false
 #     show_visualization_window: true
-#     enable_pose_smoothing: true
-#     pose_smoothing_translation_alpha: 0.45
-#     pose_smoothing_rotation_alpha: 0.45
+#     filter_fps: 20.0
+#     filter_q_pos: 0.0001
+#     filter_q_rot: 0.001
+#     filter_q_vel: 0.01
+#     filter_q_omega: 0.1
+#     filter_sigma_pos_obs: 0.005
+#     filter_sigma_rot_obs: 0.02
+#     filter_sigma_pos_motion: 0.05
+#     filter_sigma_rot_motion: 0.7
+#     filter_min_quality: 0.01
+#     filter_gate_threshold: 100.0
+#     filter_reject_cov_increase: 0.0001
+#     filter_enable_gating: true
+#     filter_enable_adaptive_R: true
 
 #     fx: 327.1586
 #     fy: 326.8882
@@ -138,9 +149,20 @@ foundationpose_stereo_tracker_multi_node:
     combined_visualization_topic: /foundationpose/combined_visualization
     depth_visualization_topic: /foundationpose/depth_image
     depth_visualization_fps: 5.0
-    enable_pose_smoothing: true
-    pose_smoothing_translation_alpha: 0.45
-    pose_smoothing_rotation_alpha: 0.45
+    filter_fps: 20.0
+    filter_q_pos: 0.0001
+    filter_q_rot: 0.001
+    filter_q_vel: 0.01
+    filter_q_omega: 0.1
+    filter_sigma_pos_obs: 0.005
+    filter_sigma_rot_obs: 0.02
+    filter_sigma_pos_motion: 0.05
+    filter_sigma_rot_motion: 0.7
+    filter_min_quality: 0.01
+    filter_gate_threshold: 100.0
+    filter_reject_cov_increase: 0.0001
+    filter_enable_gating: true
+    filter_enable_adaptive_R: true
 
     fx: 327.1586
     fy: 326.8882

@@ -38,15 +38,20 @@
 #     show_visualization_window: true
 #     save_frame_outputs: false
 #     frame_output_dir: /home/hc/weizi/ffs+fp+sam/fp/stereo_tracker_fast_outputs
-#     enable_pose_smoothing: true
-#     pose_smoothing_translation_alpha: 0.45
-#     pose_smoothing_rotation_alpha: 0.45
-#     pose_smoothing_fast_translation_alpha: 0.90
-#     pose_smoothing_fast_rotation_alpha: 0.90
-#     pose_smoothing_translation_response_meters: 0.015
-#     pose_smoothing_rotation_response_degrees: 3.0
-#     pose_smoothing_reset_translation_meters: 0.20
-#     pose_smoothing_reset_rotation_degrees: 45.0
+#     filter_fps: 20.0
+#     filter_q_pos: 0.0001
+#     filter_q_rot: 0.001
+#     filter_q_vel: 0.01
+#     filter_q_omega: 0.1
+#     filter_sigma_pos_obs: 0.005
+#     filter_sigma_rot_obs: 0.02
+#     filter_sigma_pos_motion: 0.05
+#     filter_sigma_rot_motion: 0.7
+#     filter_min_quality: 0.01
+#     filter_gate_threshold: 100.0
+#     filter_reject_cov_increase: 0.0001
+#     filter_enable_gating: true
+#     filter_enable_adaptive_R: true
 
 #     fx: 327.1586
 #     fy: 326.8882
@@ -99,15 +104,20 @@ foundationpose_stereo_tracker_fast_node:
     show_visualization_window: true
     save_frame_outputs: false
     frame_output_dir: /home/hc/weizi/ffs+fp+sam/fp/stereo_tracker_fast_outputs
-    enable_pose_smoothing: true
-    pose_smoothing_translation_alpha: 0.45
-    pose_smoothing_rotation_alpha: 0.45
-    pose_smoothing_fast_translation_alpha: 0.90
-    pose_smoothing_fast_rotation_alpha: 0.90
-    pose_smoothing_translation_response_meters: 0.015
-    pose_smoothing_rotation_response_degrees: 3.0
-    pose_smoothing_reset_translation_meters: 0.20
-    pose_smoothing_reset_rotation_degrees: 45.0
+    filter_fps: 20.0
+    filter_q_pos: 0.0001
+    filter_q_rot: 0.001
+    filter_q_vel: 0.01
+    filter_q_omega: 0.1
+    filter_sigma_pos_obs: 0.005
+    filter_sigma_rot_obs: 0.02
+    filter_sigma_pos_motion: 0.05
+    filter_sigma_rot_motion: 0.7
+    filter_min_quality: 0.01
+    filter_gate_threshold: 100.0
+    filter_reject_cov_increase: 0.0001
+    filter_enable_gating: true
+    filter_enable_adaptive_R: true
 
     # fx: 327.1586
     # fy: 326.8882

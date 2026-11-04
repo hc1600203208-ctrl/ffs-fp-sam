@@ -31,6 +31,7 @@
 #include <std_msgs/msg/header.hpp>
 
 #include "depth_confidence.hpp"
+#include "adaptive_se3_pose_filter.hpp"
 #include "detection_6d_foundationpose/foundationpose.hpp"
 #include "detection_6d_foundationpose/mesh_loader.hpp"
 #include "estimator/fast_foundation_stereo_estimator.h"
@@ -531,9 +532,9 @@ private:
     std::unique_ptr<TrackingWorker> tracking_worker;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_publisher;
     bool has_pose{false};
-    bool has_smoothed_pose{false};
     Eigen::Matrix4f last_pose{Eigen::Matrix4f::Identity()};
-    Eigen::Matrix4f smoothed_pose{Eigen::Matrix4f::Identity()};
+    adaptive_pose::Filter pose_filter;
+    builtin_interfaces::msg::Time last_filter_stamp{};
   };
 
   void DeclareParameters()
@@ -570,9 +571,20 @@ private:
     declare_parameter<double>("depth_visualization_fps", 5.0);
     declare_parameter<bool>("publish_combined_visualization", true);
     declare_parameter<std::string>("combined_visualization_topic", "/foundationpose/combined_visualization");
-    declare_parameter<bool>("enable_pose_smoothing", true);
-    declare_parameter<double>("pose_smoothing_translation_alpha", 0.45);
-    declare_parameter<double>("pose_smoothing_rotation_alpha", 0.45);
+    declare_parameter<double>("filter_fps", 20.0);
+    declare_parameter<double>("filter_q_pos", 1e-4);
+    declare_parameter<double>("filter_q_rot", 1e-3);
+    declare_parameter<double>("filter_q_vel", 1e-2);
+    declare_parameter<double>("filter_q_omega", 1e-1);
+    declare_parameter<double>("filter_sigma_pos_obs", 0.005);
+    declare_parameter<double>("filter_sigma_rot_obs", 0.02);
+    declare_parameter<double>("filter_sigma_pos_motion", 0.05);
+    declare_parameter<double>("filter_sigma_rot_motion", 0.7);
+    declare_parameter<double>("filter_min_quality", 0.01);
+    declare_parameter<double>("filter_gate_threshold", 100.0);
+    declare_parameter<double>("filter_reject_cov_increase", 1e-4);
+    declare_parameter<bool>("filter_enable_gating", true);
+    declare_parameter<bool>("filter_enable_adaptive_R", true);
     declare_parameter<double>("fx", 0.0);
     declare_parameter<double>("fy", 0.0);
     declare_parameter<double>("cx", 0.0);
@@ -637,9 +649,36 @@ private:
     {
       throw std::invalid_argument("depth_visualization_fps must be positive when image publishing is enabled");
     }
-    enable_pose_smoothing_ = get_parameter("enable_pose_smoothing").as_bool();
-    translation_alpha_ = std::clamp(get_parameter("pose_smoothing_translation_alpha").as_double(), 0.0, 1.0);
-    rotation_alpha_ = std::clamp(get_parameter("pose_smoothing_rotation_alpha").as_double(), 0.0, 1.0);
+    filter_params_.fps = get_parameter("filter_fps").as_double();
+    filter_params_.q_pos = get_parameter("filter_q_pos").as_double();
+    filter_params_.q_rot = get_parameter("filter_q_rot").as_double();
+    filter_params_.q_vel = get_parameter("filter_q_vel").as_double();
+    filter_params_.q_omega = get_parameter("filter_q_omega").as_double();
+    filter_params_.sigma_pos_obs = get_parameter("filter_sigma_pos_obs").as_double();
+    filter_params_.sigma_rot_obs = get_parameter("filter_sigma_rot_obs").as_double();
+    filter_params_.sigma_pos_motion = get_parameter("filter_sigma_pos_motion").as_double();
+    filter_params_.sigma_rot_motion = get_parameter("filter_sigma_rot_motion").as_double();
+    filter_params_.min_quality = get_parameter("filter_min_quality").as_double();
+    filter_params_.gate_threshold = get_parameter("filter_gate_threshold").as_double();
+    filter_params_.reject_cov_increase = get_parameter("filter_reject_cov_increase").as_double();
+    filter_params_.enable_gating = get_parameter("filter_enable_gating").as_bool();
+    filter_params_.enable_adaptive_R = get_parameter("filter_enable_adaptive_R").as_bool();
+    if (!std::isfinite(filter_params_.fps) || filter_params_.fps <= 0.0 ||
+        !std::isfinite(filter_params_.min_quality) || filter_params_.min_quality <= 0.0 ||
+        filter_params_.min_quality > 1.0 ||
+        !std::isfinite(filter_params_.sigma_pos_obs) || filter_params_.sigma_pos_obs <= 0.0 ||
+        !std::isfinite(filter_params_.sigma_rot_obs) || filter_params_.sigma_rot_obs <= 0.0 ||
+        !std::isfinite(filter_params_.sigma_pos_motion) || filter_params_.sigma_pos_motion <= 0.0 ||
+        !std::isfinite(filter_params_.sigma_rot_motion) || filter_params_.sigma_rot_motion <= 0.0 ||
+        !std::isfinite(filter_params_.gate_threshold) || filter_params_.gate_threshold <= 0.0 ||
+        !std::isfinite(filter_params_.q_pos) || filter_params_.q_pos < 0.0 ||
+        !std::isfinite(filter_params_.q_rot) || filter_params_.q_rot < 0.0 ||
+        !std::isfinite(filter_params_.q_vel) || filter_params_.q_vel < 0.0 ||
+        !std::isfinite(filter_params_.q_omega) || filter_params_.q_omega < 0.0 ||
+        !std::isfinite(filter_params_.reject_cov_increase) || filter_params_.reject_cov_increase < 0.0)
+    {
+      throw std::invalid_argument("Invalid adaptive SE3 filter parameters");
+    }
     max_input_image_height_ = get_parameter("max_input_image_height").as_int();
     max_input_image_width_ = get_parameter("max_input_image_width").as_int();
     register_refine_iterations_ = static_cast<std::size_t>(get_parameter("register_refine_iterations").as_int());
@@ -1151,6 +1190,9 @@ private:
       {
         tracked_objects_[index].has_pose = true;
         tracked_objects_[index].last_pose = pose;
+        tracked_objects_[index].pose_filter = adaptive_pose::Filter(filter_params_);
+        tracked_objects_[index].pose_filter.Initialize(pose);
+        tracked_objects_[index].last_filter_stamp = header.stamp;
         updated = true;
       }
     }
@@ -1178,7 +1220,10 @@ private:
         std::lock_guard<std::mutex> lock(worker.mutex);
         worker.rgb = rgb;
         worker.depth = depth;
-        worker.hypothesis = tracked_objects_[index].last_pose;
+        auto &object = tracked_objects_[index];
+        const double dt = (rclcpp::Time(header.stamp) - rclcpp::Time(object.last_filter_stamp)).seconds();
+        worker.hypothesis = object.pose_filter.Predict(dt);
+        object.last_filter_stamp = header.stamp;
         worker.finished = false;
         worker.has_job = true;
         worker.job_submitted_at = std::chrono::steady_clock::now();
@@ -1192,6 +1237,7 @@ private:
     bool updated = false;
     double total_refine_ms = 0.0;
     double total_schedule_wait_ms = 0.0;
+    double filter_ms = 0.0;
     for (std::size_t index = 0; index < tracked_objects_.size(); ++index)
     {
       auto &worker = *tracked_objects_[index].tracking_worker;
@@ -1202,11 +1248,12 @@ private:
       timing.per_object_schedule_wait_ms[index] = result.schedule_wait_ms;
       total_refine_ms += result.refine_ms;
       total_schedule_wait_ms += result.schedule_wait_ms;
-      if (result.success)
-      {
-        tracked_objects_[result.object_index].last_pose = result.pose;
-        updated = true;
-      }
+      auto &object = tracked_objects_[result.object_index];
+      const auto filter_start = std::chrono::steady_clock::now();
+      object.last_pose = result.success ? object.pose_filter.Update(result.pose)
+                                        : object.pose_filter.CommitPrediction();
+      filter_ms += foundationpose_profiling::MillisecondsBetween(filter_start, std::chrono::steady_clock::now());
+      updated = true;
     }
     const auto sync_end = std::chrono::steady_clock::now();
     timing.multi_object_sync_total_ms =
@@ -1219,43 +1266,12 @@ private:
     timing.depth_restore_align_ms = depth_timings.depth_restore_align_ms;
     if (updated)
     {
-      timing.se3_filter_ms = PublishCurrentResults(header, rgb, "track");
+      timing.se3_filter_ms = filter_ms;
+      PublishCurrentResults(header, rgb, "track");
     }
     timing.end_to_end_ms =
         foundationpose_profiling::MillisecondsBetween(frame_start, std::chrono::steady_clock::now());
     return timing;
-  }
-
-  Eigen::Matrix4f SmoothPoseForDisplay(TrackedObject &object, const Eigen::Matrix4f &raw_pose) const
-  {
-    // 平移线性滤波、旋转四元数 slerp；原始 last_pose 仍用于下一帧追踪。
-    if (!enable_pose_smoothing_)
-    {
-      object.has_smoothed_pose = false;
-      return raw_pose;
-    }
-    Eigen::Quaternionf raw_quaternion(raw_pose.block<3, 3>(0, 0));
-    raw_quaternion.normalize();
-    if (!object.has_smoothed_pose)
-    {
-      object.smoothed_pose = raw_pose;
-      object.smoothed_pose.block<3, 3>(0, 0) = raw_quaternion.toRotationMatrix();
-      object.has_smoothed_pose = true;
-      return object.smoothed_pose;
-    }
-    Eigen::Quaternionf previous_quaternion(object.smoothed_pose.block<3, 3>(0, 0));
-    previous_quaternion.normalize();
-    if (previous_quaternion.dot(raw_quaternion) < 0.0F)
-    {
-      raw_quaternion.coeffs() *= -1.0F;
-    }
-    const Eigen::Vector3f previous_translation = object.smoothed_pose.block<3, 1>(0, 3);
-    const Eigen::Vector3f raw_translation = raw_pose.block<3, 1>(0, 3);
-    object.smoothed_pose.block<3, 1>(0, 3) = previous_translation +
-        static_cast<float>(translation_alpha_) * (raw_translation - previous_translation);
-    object.smoothed_pose.block<3, 3>(0, 0) =
-        previous_quaternion.slerp(static_cast<float>(rotation_alpha_), raw_quaternion).normalized().toRotationMatrix();
-    return object.smoothed_pose;
   }
 
   std_msgs::msg::Header PoseHeader(const std_msgs::msg::Header &header) const
@@ -1269,10 +1285,9 @@ private:
     return output_header;
   }
 
-  double PublishCurrentResults(const std_msgs::msg::Header &header, const cv::Mat &rgb, const std::string &mode)
+  void PublishCurrentResults(const std_msgs::msg::Header &header, const cv::Mat &rgb, const std::string &mode)
   {
-    // 每目标及 primary topic 发布原始 PoseStamped；平滑值仅供日志和可视化。
-    double se3_filter_ms = 0.0;
+    // 发布、日志和可视化均使用同一滤波后的 mesh 位姿。
     const auto output_header = PoseHeader(header);
     for (std::size_t index = 0; index < tracked_objects_.size(); ++index)
     {
@@ -1281,35 +1296,33 @@ private:
       {
         continue;
       }
-      const auto filter_start = std::chrono::steady_clock::now();
-      const Eigen::Matrix4f display_pose = SmoothPoseForDisplay(object, object.last_pose);
-      se3_filter_ms +=
-          foundationpose_profiling::MillisecondsBetween(filter_start, std::chrono::steady_clock::now());
       const auto pose_message = PoseMatrixToPoseStamped(object.last_pose, output_header);
       object.pose_publisher->publish(pose_message);
       if (index == 0)
       {
         primary_pose_publisher_->publish(pose_message);
-        PrintFirstPose(output_header, display_pose, mode);
+        PrintFirstPose(output_header, object.last_pose, mode);
       }
     }
     PublishVisualization(output_header, rgb);
-    return se3_filter_ms;
   }
 
   void PrintFirstPose(const std_msgs::msg::Header &header, const Eigen::Matrix4f &pose,
                       const std::string &mode) const
   {
-    // 日志使用平滑位姿；xyz 为米，RPY 为度。
+    // xyz 为米，RPY 为度。
     const Eigen::Vector3f rpy = RotationMatrixToRpyDegrees(pose.block<3, 3>(0, 0));
     Eigen::Quaternionf quaternion(pose.block<3, 3>(0, 0));
     quaternion.normalize();
     RCLCPP_INFO(get_logger(),
                 "FILTERED_POSE object=%s mode=%s stamp=%d.%09u frame=%s xyz_m=[%.6f %.6f %.6f] "
-                "rpy_deg=[%.3f %.3f %.3f] quat=[%.6f %.6f %.6f %.6f]",
+                "rpy_deg=[%.3f %.3f %.3f] quat=[%.6f %.6f %.6f %.6f] quality=%.4f mahalanobis=%.4f accepted=%d",
                 tracked_objects_.front().name.c_str(), mode.c_str(), header.stamp.sec, header.stamp.nanosec,
                 header.frame_id.c_str(), pose(0, 3), pose(1, 3), pose(2, 3), rpy.x(), rpy.y(), rpy.z(),
-                quaternion.x(), quaternion.y(), quaternion.z(), quaternion.w());
+                quaternion.x(), quaternion.y(), quaternion.z(), quaternion.w(),
+                tracked_objects_.front().pose_filter.debug().quality,
+                tracked_objects_.front().pose_filter.debug().mahalanobis,
+                tracked_objects_.front().pose_filter.debug().accepted ? 1 : 0);
   }
 
   cv::Mat BuildVisualization(const cv::Mat &rgb) const
@@ -1340,7 +1353,7 @@ private:
     cv::Mat visualization = BuildVisualization(rgb);
     if (!tracked_objects_.empty() && tracked_objects_.front().has_pose)
     {
-      DrawFirstPoseOverlay(visualization, tracked_objects_.front().smoothed_pose);
+      DrawFirstPoseOverlay(visualization, tracked_objects_.front().last_pose);
     }
     if (publish_visualization_ && visualization_publisher_)
     {
@@ -1390,7 +1403,7 @@ private:
     cv::Mat tracking = BuildVisualization(rgb);
     if (!tracked_objects_.empty() && tracked_objects_.front().has_pose)
     {
-      DrawFirstPoseOverlay(tracking, tracked_objects_.front().smoothed_pose);
+      DrawFirstPoseOverlay(tracking, tracked_objects_.front().last_pose);
     }
     cv::Mat scaled(depth.size(), CV_8UC1, cv::Scalar(0));
     cv::Mat valid = (depth > 0.0f) & (depth < max_depth_meters_) & (depth == depth);
@@ -1443,9 +1456,7 @@ private:
   double depth_visualization_fps_{5.0};
   bool publish_combined_visualization_{true};
   std::string combined_visualization_topic_;
-  bool enable_pose_smoothing_{true};
-  double translation_alpha_{0.45};
-  double rotation_alpha_{0.45};
+  adaptive_pose::Params filter_params_;
   int max_input_image_height_{480};
   int max_input_image_width_{640};
   std::size_t register_refine_iterations_{5};

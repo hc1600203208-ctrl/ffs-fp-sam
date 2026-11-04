@@ -30,6 +30,7 @@
 #include <std_msgs/msg/header.hpp>
 
 #include "detection_6d_foundationpose/foundationpose.hpp"
+#include "adaptive_se3_pose_filter.hpp"
 #include "detection_6d_foundationpose/mesh_loader.hpp"
 #include "estimator/fast_foundation_stereo_estimator.h"
 #include "stereo_calibration_utils.hpp"
@@ -621,15 +622,20 @@ private:
     this->declare_parameter<bool>("save_frame_outputs", false);
     this->declare_parameter<std::string>("frame_output_dir",
                                          "/home/bit/ffs+fp+sam/fp/stereo_tracker_fast_outputs");
-    this->declare_parameter<bool>("enable_pose_smoothing", true);
-    this->declare_parameter<double>("pose_smoothing_translation_alpha", 0.45);
-    this->declare_parameter<double>("pose_smoothing_rotation_alpha", 0.45);
-    this->declare_parameter<double>("pose_smoothing_fast_translation_alpha", 0.90);
-    this->declare_parameter<double>("pose_smoothing_fast_rotation_alpha", 0.90);
-    this->declare_parameter<double>("pose_smoothing_translation_response_meters", 0.015);
-    this->declare_parameter<double>("pose_smoothing_rotation_response_degrees", 3.0);
-    this->declare_parameter<double>("pose_smoothing_reset_translation_meters", 0.20);
-    this->declare_parameter<double>("pose_smoothing_reset_rotation_degrees", 45.0);
+    this->declare_parameter<double>("filter_fps", 20.0);
+    this->declare_parameter<double>("filter_q_pos", 1e-4);
+    this->declare_parameter<double>("filter_q_rot", 1e-3);
+    this->declare_parameter<double>("filter_q_vel", 1e-2);
+    this->declare_parameter<double>("filter_q_omega", 1e-1);
+    this->declare_parameter<double>("filter_sigma_pos_obs", 0.005);
+    this->declare_parameter<double>("filter_sigma_rot_obs", 0.02);
+    this->declare_parameter<double>("filter_sigma_pos_motion", 0.05);
+    this->declare_parameter<double>("filter_sigma_rot_motion", 0.7);
+    this->declare_parameter<double>("filter_min_quality", 0.01);
+    this->declare_parameter<double>("filter_gate_threshold", 100.0);
+    this->declare_parameter<double>("filter_reject_cov_increase", 1e-4);
+    this->declare_parameter<bool>("filter_enable_gating", true);
+    this->declare_parameter<bool>("filter_enable_adaptive_R", true);
     this->declare_parameter<double>("fx", 0.0);
     this->declare_parameter<double>("fy", 0.0);
     this->declare_parameter<double>("cx", 0.0);
@@ -668,25 +674,36 @@ private:
     show_visualization_window_ = this->get_parameter("show_visualization_window").as_bool();
     save_frame_outputs_ = this->get_parameter("save_frame_outputs").as_bool();
     frame_output_dir_ = this->get_parameter("frame_output_dir").as_string();
-    enable_pose_smoothing_ = this->get_parameter("enable_pose_smoothing").as_bool();
-    pose_smoothing_translation_alpha_ = std::clamp(
-        this->get_parameter("pose_smoothing_translation_alpha").as_double(), 0.0, 1.0);
-    pose_smoothing_rotation_alpha_ = std::clamp(
-        this->get_parameter("pose_smoothing_rotation_alpha").as_double(), 0.0, 1.0);
-    pose_smoothing_fast_translation_alpha_ = std::clamp(
-        this->get_parameter("pose_smoothing_fast_translation_alpha").as_double(),
-        pose_smoothing_translation_alpha_, 1.0);
-    pose_smoothing_fast_rotation_alpha_ = std::clamp(
-        this->get_parameter("pose_smoothing_fast_rotation_alpha").as_double(),
-        pose_smoothing_rotation_alpha_, 1.0);
-    pose_smoothing_translation_response_meters_ =
-        std::max(0.0, this->get_parameter("pose_smoothing_translation_response_meters").as_double());
-    pose_smoothing_rotation_response_degrees_ =
-        std::max(0.0, this->get_parameter("pose_smoothing_rotation_response_degrees").as_double());
-    pose_smoothing_reset_translation_meters_ =
-        this->get_parameter("pose_smoothing_reset_translation_meters").as_double();
-    pose_smoothing_reset_rotation_degrees_ =
-        this->get_parameter("pose_smoothing_reset_rotation_degrees").as_double();
+    filter_params_.fps = this->get_parameter("filter_fps").as_double();
+    filter_params_.q_pos = this->get_parameter("filter_q_pos").as_double();
+    filter_params_.q_rot = this->get_parameter("filter_q_rot").as_double();
+    filter_params_.q_vel = this->get_parameter("filter_q_vel").as_double();
+    filter_params_.q_omega = this->get_parameter("filter_q_omega").as_double();
+    filter_params_.sigma_pos_obs = this->get_parameter("filter_sigma_pos_obs").as_double();
+    filter_params_.sigma_rot_obs = this->get_parameter("filter_sigma_rot_obs").as_double();
+    filter_params_.sigma_pos_motion = this->get_parameter("filter_sigma_pos_motion").as_double();
+    filter_params_.sigma_rot_motion = this->get_parameter("filter_sigma_rot_motion").as_double();
+    filter_params_.min_quality = this->get_parameter("filter_min_quality").as_double();
+    filter_params_.gate_threshold = this->get_parameter("filter_gate_threshold").as_double();
+    filter_params_.reject_cov_increase = this->get_parameter("filter_reject_cov_increase").as_double();
+    filter_params_.enable_gating = this->get_parameter("filter_enable_gating").as_bool();
+    filter_params_.enable_adaptive_R = this->get_parameter("filter_enable_adaptive_R").as_bool();
+    if (!std::isfinite(filter_params_.fps) || filter_params_.fps <= 0.0 ||
+        !std::isfinite(filter_params_.min_quality) || filter_params_.min_quality <= 0.0 ||
+        filter_params_.min_quality > 1.0 ||
+        !std::isfinite(filter_params_.sigma_pos_obs) || filter_params_.sigma_pos_obs <= 0.0 ||
+        !std::isfinite(filter_params_.sigma_rot_obs) || filter_params_.sigma_rot_obs <= 0.0 ||
+        !std::isfinite(filter_params_.sigma_pos_motion) || filter_params_.sigma_pos_motion <= 0.0 ||
+        !std::isfinite(filter_params_.sigma_rot_motion) || filter_params_.sigma_rot_motion <= 0.0 ||
+        !std::isfinite(filter_params_.gate_threshold) || filter_params_.gate_threshold <= 0.0 ||
+        !std::isfinite(filter_params_.q_pos) || filter_params_.q_pos < 0.0 ||
+        !std::isfinite(filter_params_.q_rot) || filter_params_.q_rot < 0.0 ||
+        !std::isfinite(filter_params_.q_vel) || filter_params_.q_vel < 0.0 ||
+        !std::isfinite(filter_params_.q_omega) || filter_params_.q_omega < 0.0 ||
+        !std::isfinite(filter_params_.reject_cov_increase) || filter_params_.reject_cov_increase < 0.0)
+    {
+      throw std::invalid_argument("Invalid adaptive SE3 filter parameters");
+    }
     mask_poll_interval_ms_ = this->get_parameter("mask_poll_interval_ms").as_int();
     resize_mask_to_input_  = this->get_parameter("resize_mask_to_input").as_bool();
     max_input_image_height_ = this->get_parameter("max_input_image_height").as_int();
@@ -1019,37 +1036,41 @@ private:
     }
 
     has_pose_  = true;
-    last_pose_ = pose;
-    const Eigen::Matrix4f filtered_pose = SmoothPoseForDisplay(last_pose_);
+    pose_filter_ = adaptive_pose::Filter(filter_params_);
+    pose_filter_.Initialize(pose);
+    last_filter_stamp_ = header.stamp;
+    last_pose_ = pose_filter_.pose();
+    const Eigen::Matrix4f filtered_pose = last_pose_;
     UpdateCurrentFilteredPose(filtered_pose);
     PrintFilteredPose(header, filtered_pose, "register");
     PublishPose(header, last_pose_);
     SaveFrameOutput(header, rgb, last_pose_, "register");
     PublishVisualization(header, rgb, last_pose_);
-    // PublishPose(header, filtered_pose);
-    // SaveFrameOutput(header, rgb, filtered_pose, "register");
-    // PublishVisualization(header, rgb, filtered_pose);
     // RCLCPP_INFO(this->get_logger(), "Initial registration succeeded. Fast direct tracking started.");
   }
 
   void RunTracking(const std_msgs::msg::Header &header, const cv::Mat &rgb, const cv::Mat &depth)
   {
+    const double dt = (rclcpp::Time(header.stamp) - rclcpp::Time(last_filter_stamp_)).seconds();
+    const Eigen::Matrix4f predicted_pose = pose_filter_.Predict(dt);
+    last_filter_stamp_ = header.stamp;
     Eigen::Matrix4f pose;
-    if (!foundation_pose_->Track(rgb, depth, last_pose_, object_name_, pose, track_refine_iters_))
+    bool success = false;
+    try
     {
-      return;
+      success = foundation_pose_->Track(rgb, depth, predicted_pose, object_name_, pose, track_refine_iters_);
     }
-
-    last_pose_ = pose;
-    const Eigen::Matrix4f filtered_pose = SmoothPoseForDisplay(last_pose_);
+    catch (const std::exception &error)
+    {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "FoundationPose tracking failed: %s", error.what());
+    }
+    last_pose_ = success ? pose_filter_.Update(pose) : pose_filter_.CommitPrediction();
+    const Eigen::Matrix4f filtered_pose = last_pose_;
     UpdateCurrentFilteredPose(filtered_pose);
-    PrintFilteredPose(header, filtered_pose, "register");
+    PrintFilteredPose(header, filtered_pose, "track");
     PublishPose(header, last_pose_);
-    SaveFrameOutput(header, rgb, last_pose_, "register");
+    SaveFrameOutput(header, rgb, last_pose_, "track");
     PublishVisualization(header, rgb, last_pose_);
-    // PublishPose(header, filtered_pose);
-    // SaveFrameOutput(header, rgb, filtered_pose, "register");
-    // PublishVisualization(header, rgb, filtered_pose);
   }
 
   void PublishPose(std_msgs::msg::Header header, const Eigen::Matrix4f &pose)
@@ -1059,84 +1080,6 @@ private:
       header.frame_id = pose_frame_id_;
     }
     pose_pub_->publish(PoseMatrixToPoseStamped(pose, header));
-  }
-
-  Eigen::Matrix4f SmoothPoseForDisplay(const Eigen::Matrix4f &raw_pose)
-  {
-    if (!enable_pose_smoothing_)
-    {
-      has_smoothed_output_pose_ = false;
-      return raw_pose;
-    }
-
-    Eigen::Quaternionf raw_quat(raw_pose.block<3, 3>(0, 0));
-    raw_quat.normalize();
-    const Eigen::Vector3f raw_translation = raw_pose.block<3, 1>(0, 3);
-
-    if (!has_smoothed_output_pose_)
-    {
-      smoothed_output_pose_ = raw_pose;
-      smoothed_output_pose_.block<3, 3>(0, 0) = raw_quat.toRotationMatrix();
-      has_smoothed_output_pose_ = true;
-      return smoothed_output_pose_;
-    }
-
-    Eigen::Quaternionf previous_quat(smoothed_output_pose_.block<3, 3>(0, 0));
-    previous_quat.normalize();
-    if (previous_quat.dot(raw_quat) < 0.0F)
-    {
-      raw_quat.coeffs() *= -1.0F;
-    }
-
-    const Eigen::Vector3f previous_translation = smoothed_output_pose_.block<3, 1>(0, 3);
-    const double translation_delta = static_cast<double>((raw_translation - previous_translation).norm());
-    const double quaternion_dot =
-        std::clamp(static_cast<double>(std::fabs(previous_quat.dot(raw_quat))), 0.0, 1.0);
-    const double rotation_delta_degrees =
-        2.0 * std::acos(quaternion_dot) * static_cast<double>(kRadiansToDegrees);
-
-    const bool reset_by_translation =
-        pose_smoothing_reset_translation_meters_ > 0.0 &&
-        translation_delta > pose_smoothing_reset_translation_meters_;
-    const bool reset_by_rotation =
-        pose_smoothing_reset_rotation_degrees_ > 0.0 &&
-        rotation_delta_degrees > pose_smoothing_reset_rotation_degrees_;
-    if (reset_by_translation || reset_by_rotation)
-    {
-      smoothed_output_pose_ = raw_pose;
-      smoothed_output_pose_.block<3, 3>(0, 0) = raw_quat.toRotationMatrix();
-      return smoothed_output_pose_;
-    }
-
-    const float translation_alpha = static_cast<float>(ComputeAdaptiveSmoothingAlpha(
-        pose_smoothing_translation_alpha_, pose_smoothing_fast_translation_alpha_,
-        translation_delta, pose_smoothing_translation_response_meters_));
-    const float rotation_alpha = static_cast<float>(ComputeAdaptiveSmoothingAlpha(
-        pose_smoothing_rotation_alpha_, pose_smoothing_fast_rotation_alpha_,
-        rotation_delta_degrees, pose_smoothing_rotation_response_degrees_));
-    const Eigen::Vector3f smoothed_translation =
-        previous_translation + translation_alpha * (raw_translation - previous_translation);
-    const Eigen::Quaternionf smoothed_quat = previous_quat.slerp(rotation_alpha, raw_quat).normalized();
-
-    smoothed_output_pose_ = raw_pose;
-    smoothed_output_pose_.block<3, 3>(0, 0) = smoothed_quat.toRotationMatrix();
-    smoothed_output_pose_.block<3, 1>(0, 3) = smoothed_translation;
-    return smoothed_output_pose_;
-  }
-
-  double ComputeAdaptiveSmoothingAlpha(double slow_alpha,
-                                       double fast_alpha,
-                                       double delta,
-                                       double full_response_delta) const
-  {
-    if (full_response_delta <= 0.0)
-    {
-      return fast_alpha;
-    }
-
-    const double clamped_ratio = std::clamp(delta / full_response_delta, 0.0, 1.0);
-    const double smooth_ratio = clamped_ratio * clamped_ratio * (3.0 - 2.0 * clamped_ratio);
-    return slow_alpha + (fast_alpha - slow_alpha) * smooth_ratio;
   }
 
   Eigen::Vector3f ComputeSeededRpyDegrees(const Eigen::Matrix3f &rotation_matrix) const
@@ -1211,7 +1154,7 @@ private:
 
     RCLCPP_INFO(this->get_logger(),
                 "FILTERED_POSE mode=%s stamp=%d.%09u frame=%s xyz_m=[%.6f %.6f %.6f] "
-                "rpy_deg=[%.3f %.3f %.3f] quat=[%.6f %.6f %.6f %.6f]",
+                "rpy_deg=[%.3f %.3f %.3f] quat=[%.6f %.6f %.6f %.6f] quality=%.4f mahalanobis=%.4f accepted=%d",
                 mode.c_str(),
                 output_header.stamp.sec,
                 output_header.stamp.nanosec,
@@ -1225,7 +1168,10 @@ private:
                 quat.x(),
                 quat.y(),
                 quat.z(),
-                quat.w());
+                quat.w(),
+                pose_filter_.debug().quality,
+                pose_filter_.debug().mahalanobis,
+                pose_filter_.debug().accepted ? 1 : 0);
   }
 
   void SaveFrameOutput(const std_msgs::msg::Header &header,
@@ -1366,27 +1312,19 @@ private:
   bool   publish_visualization_{false};
   bool   show_visualization_window_{false};
   bool   save_frame_outputs_{false};
-  bool   enable_pose_smoothing_{true};
-  double pose_smoothing_translation_alpha_{0.45};
-  double pose_smoothing_rotation_alpha_{0.45};
-  double pose_smoothing_fast_translation_alpha_{0.90};
-  double pose_smoothing_fast_rotation_alpha_{0.90};
-  double pose_smoothing_translation_response_meters_{0.015};
-  double pose_smoothing_rotation_response_degrees_{3.0};
-  double pose_smoothing_reset_translation_meters_{0.20};
-  double pose_smoothing_reset_rotation_degrees_{45.0};
+  adaptive_pose::Params filter_params_;
+  adaptive_pose::Filter pose_filter_;
+  builtin_interfaces::msg::Time last_filter_stamp_{};
   size_t register_refine_iters_{5};
   size_t track_refine_iters_{2};
   size_t saved_frame_index_{0};
   bool has_last_saved_pose_{false};
   bool has_last_printed_rpy_{false};
   bool has_current_filtered_pose_{false};
-  bool has_smoothed_output_pose_{false};
   std::string frame_output_dir_;
   std::string pose_output_path_;
   std::ofstream pose_output_stream_;
   Eigen::Matrix4f last_saved_pose_{Eigen::Matrix4f::Identity()};
-  Eigen::Matrix4f smoothed_output_pose_{Eigen::Matrix4f::Identity()};
   Eigen::Vector3f last_printed_rpy_degrees_{Eigen::Vector3f::Zero()};
   Eigen::Vector3f current_translation_meters_{Eigen::Vector3f::Zero()};
   Eigen::Vector3f current_rpy_degrees_{Eigen::Vector3f::Zero()};
