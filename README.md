@@ -56,7 +56,7 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py \
   params_file:="$PWD/fp/src/foundationpose_cpp/config/你的配置.yaml"
 ```
 
-另一个终端启动双目相机驱动，发布与 YAML 相同的左右图话题；离线验证可用 `ros2 bag play <bag目录>`。单目标改用 `foundationpose_stereo_tracker_fast.launch.py`。启动后可用 `ros2 topic list` 和 `ros2 topic echo /foundationpose/pose` 检查位姿。默认 launch 的部分路径仍与本仓库开发机相关，部署时检查 launch/YAML，尤其是 mask 输出目录与动态库路径。没有真实相机时，可先运行 `sim/src/sim_stereo_cpp` 的渲染节点，流程见 `sim/README.md`；星地数据流场景见 `sim/src/satellite_stereo/README.md` 与 `app/satellite_stereo_multi_app.py`。
+另一个终端启动双目相机驱动，发布与 YAML 相同的左右图话题；离线验证可用 `ros2 bag play <bag目录>`。单目标改用 `foundationpose_stereo_tracker_fast.launch.py`。启动后可用 `ros2 topic list` 和 `ros2 topic echo /foundationpose/pose` 检查位姿。默认 launch 的部分路径仍与本仓库开发机相关，部署时检查 launch/YAML，尤其是 mask 输出目录与动态库路径。没有真实相机时，可按 [本地多目标双目渲染 App 使用说明](app/SIM_STEREO_MULTI_APP.md)运行 `sim_stereo_multi_app.py`；星地场景的通信、打包与两端启动步骤见[星地多目标双目渲染 App 与部署说明](app/SATELLITE_STEREO_MULTI_APP.md)。
 
 ## 自适应滤波参数与行为
 

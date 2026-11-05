@@ -20,6 +20,8 @@ ros2_install/
 *.csv
 compile_commands.json
 *.md
+!/app/SIM_STEREO_MULTI_APP.md
+!/app/SATELLITE_STEREO_MULTI_APP.md
 
 # Python and tool caches
 __pycache__/
@@ -69,6 +71,8 @@ assets/
 *.tar.gz
 *.7z
 *.ipynb
+!/app/assets/
+!/app/assets/stereo_background.png
 
 # Optional demo/playground code that is not needed by the integrated pipeline
 /Grounded-Segment-Anything/EfficientSAM/
