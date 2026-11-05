@@ -20,8 +20,7 @@ ros2_install/
 *.csv
 compile_commands.json
 *.md
-!/app/SIM_STEREO_MULTI_APP.md
-!/app/SATELLITE_STEREO_MULTI_APP.md
+!/README.md
 
 # Python and tool caches
 __pycache__/

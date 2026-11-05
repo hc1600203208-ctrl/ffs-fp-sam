@@ -5,7 +5,7 @@
   <version>1.0.0</version>
   <description>fast_foundation_stereo</description>
   <maintainer email="zhanghao.py@gmail.com">Howard Zhang</maintainer>
-  <license>TODO: License declaration</license>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

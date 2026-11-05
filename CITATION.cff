@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this deployment project, cite this software and the upstream papers listed in README.md."
+title: "Stereo multi-object 6D pose tracking deployment with Fast-FoundationStereo and FoundationPose"
+type: software
+authors:
+  - name: "hc"
+repository-code: "https://github.com/hc1600203208-ctrl/ffs-fp-sam"
+keywords:
+  - stereo vision
+  - 6D pose tracking
+  - TensorRT
+  - ROS 2

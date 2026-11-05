@@ -1,6 +1,17 @@
 # 双目深度与多目标 6D 位姿跟踪部署
 
-本仓库把 Fast-FoundationStereo（FFS）、GroundingDINO + SAM、FoundationPose 的 C++/TensorRT 推理接成 ROS 2 双目跟踪流程，并提供仿真双目渲染及应用程序。目标是使用左右相机图像、相机标定、目标网格和首帧掩码，连续输出每个物体相对于左相机的 6D 位姿。发布到 GitHub 前，请按下文的“开源准备”检查模型、数据和路径。
+本仓库把 Fast-FoundationStereo（FFS）、GroundingDINO + Segment Anything（SAM）、FoundationPose 的 C++/TensorRT 推理接成 ROS 2 双目跟踪流程，并提供仿真双目渲染及应用程序。输入左右相机图像、相机标定、目标网格和首帧掩码，连续输出每个物体相对于左相机的 6D 位姿。代码与模型有不同的授权条件，使用前请阅读文末的授权说明。
+
+## 实验视频
+
+点击预览图可在 GitHub 打开或下载仓库中的原始 MP4。它们展示跟踪叠加效果，并非精度基准或性能测量。
+
+| 场景 | 视频 |
+| --- | --- |
+| 三目标快速运动 | [![三目标快速运动](media/three_fast.jpg)](media/three_fast.mp4) |
+| 三目标慢速运动 | [![三目标慢速运动](media/three_slow.jpg)](media/three_slow.mp4) |
+| 室内实验 | [![室内实验](media/indoor.jpg)](media/indoor.mp4) |
+| 室外实验 | [![室外实验](media/outdoor.jpg)](media/outdoor.mp4) |
 
 ## 功能与代码流程
 
@@ -17,14 +28,28 @@
 
 - [Fast-FoundationStereo](https://arxiv.org/abs/2512.11130) 用知识蒸馏压缩骨干网络、分块神经架构搜索优化代价滤波、结构化剪枝减少迭代细化开销，并用自动伪标注扩充野外双目训练数据，以兼顾零样本泛化和实时速度。本仓库将它以 TensorRT 双阶段引擎接入双目深度链路。
 - [FoundationPose](https://github.com/NVlabs/FoundationPose) 利用已知物体网格和首帧掩码做 6D 位姿注册，以渲染与网络细化进行后续跟踪。本仓库的 C++ 版本把位姿转回原始 mesh 坐标系，集成多目标工作线程和预测反馈。
-- [Grounded Segment Anything](https://github.com/IDEA-Research/Grounded-Segment-Anything) 组合开放词汇检测与 SAM 分割，解决初始目标掩码获取问题；本仓库使用固定提示词导出的 TensorRT 引擎，换提示词时需重新导出对应 DINO 模型。
+- [GroundingDINO](https://github.com/IDEA-Research/GroundingDINO) 与 [Segment Anything](https://github.com/facebookresearch/segment-anything) 分别提供开放词汇目标框和掩码。本仓库使用固定提示词导出的 TensorRT 引擎，换提示词时需重新导出对应 DINO 模型。当前 `sam/scripts/export_onnx.py` 导入的是原版 `segment_anything`，**不是 SAM 2**。
 - 自适应滤波来自本地 FoundationPose Python 脚本 `run_demo_adaptive_filter.py` 及其 `tracking/adaptive_se3_pose_filter.py`，属于本工程新增的部署逻辑，并非上述论文的原创贡献。C++ 实现在 `fp/src/foundationpose_cpp/src/adaptive_se3_pose_filter.hpp`。
 
 ## 环境要求
 
 当前工程按 Linux、ROS 2 Jazzy、C++17、NVIDIA GPU、CUDA、TensorRT 10、OpenCV 4、Eigen3 构建；`fp` 的 CMake 目前将 TensorRT 头文件和库路径指向 `/usr/src/tensorrt` 的 x86_64 布局，迁移到其他平台须调整该路径。还需要 `colcon`、`ament_cmake`、`rclcpp`、`sensor_msgs`、`geometry_msgs`、`std_msgs`、`cv_bridge`、`message_filters`、`tf2`，以及工程 CMake 所需的 Assimp、CUDA 开发包等依赖。模型导出阶段另需相应 Python 上游工程及 PyTorch；在线 C++ 推理只加载已生成的 TensorRT engine。
 
-TensorRT engine 往往与 GPU 架构、TensorRT/CUDA 版本相关；需在实际部署设备上生成或重新构建。默认示例 YAML 含开发机绝对路径，不能直接用于另一台机器。
+以下是 **2026-11-05 在本项目开发主机上实测** 的版本，仅作复现参考：
+
+| 项目 | 本机版本 |
+| --- | --- |
+| 系统 / 内核 / 架构 | Ubuntu 24.04.4 LTS / Linux 7.0.0-28-generic / x86_64 |
+| GPU | NVIDIA GeForce RTX 5060 Ti，显存 16311 MiB，计算能力 12.0 |
+| NVIDIA 驱动 / CUDA Toolkit | 580.178.04 / 12.8.93 |
+| TensorRT | 10.8.0.43（本机 `NvInferVersion.h`；`trtexec` 显示 v100800） |
+| ROS 2 | Jazzy；`rclcpp` 28.1.18，`ament_cmake` 2.5.6，`cv_bridge` 4.1.0 |
+| 编译工具 | GCC 13.3.0，CMake 3.28.3，colcon-core 0.20.1，Python 3.12.3 |
+| 图像和几何库 | OpenCV 4.11.0（当前 `pkg-config`/Python），系统 `libopencv-dev` 4.6.0；Eigen3 3.4.0，Assimp 5.3.1 |
+
+本机同时装有两套 OpenCV，构建时链接器报告 ROS `cv_bridge` 的 4.6 库与工程发现的 4.11 库可能冲突。该工程在本机编译通过，但复现时应尽量统一 OpenCV 运行时，特别是在不同设备或容器中。示例 YAML 含开发机绝对路径，需要改为本机路径。
+
+项目作者另报告已在 NVIDIA Jetson Thor 开发套件、JetPack 7.2 上跑通。上述版本表来自 x86_64 开发主机，不代表 Thor 的实测库版本。Thor 上必须重新生成 engine，并把 `ffs/src/ffs_pkg/CMakeLists.txt`、`fp/src/foundationpose_cpp/CMakeLists.txt` 中写死的 `x86_64-linux-gnu` TensorRT 库路径改为设备上的 `aarch64-linux-gnu` 或实际安装路径；`sam/CMakeLists.txt` 可通过 `TENSORRT_ROOT` 搜索两种架构。还需修改配置 YAML 与 launch 文件中的模型、标定、掩码和动态库路径。
 
 ## 依赖和模型准备
 
@@ -33,7 +58,35 @@ source /opt/ros/jazzy/setup.bash
 sudo apt install python3-colcon-common-extensions libopencv-dev libeigen3-dev libassimp-dev
 ```
 
-安装匹配设备的 NVIDIA 驱动、CUDA Toolkit、TensorRT 开发与运行库，并确认 `nvcc` 和 TensorRT 头文件/库可由 CMake 找到。FFS 需要 feature/post 两个 engine，FoundationPose 需要 refiner/scorer 两个 engine；自动首帧掩码还需固定提示词 DINO engine 和 SAM encoder/decoder engine。生成方法及导出限制见 `ffs/src/ffs_pkg/USAGE.md`、`fp/src/foundationpose_cpp/README_cn.md` 和 `sam/README.md`。网格文件需包含可加载的几何体及对应纹理；左右相机标定须与输入图像尺寸及实际相机一致。
+安装匹配设备的 NVIDIA 驱动、CUDA Toolkit、TensorRT 开发与运行库，并确认 `nvcc` 和 TensorRT 头文件/库可由 CMake 找到。FFS 需要 feature/post 两个 engine，FoundationPose 需要 refiner/scorer 两个 engine；自动首帧掩码还需固定提示词 DINO engine 和 SAM encoder/decoder engine。网格文件需包含可加载的几何体及对应纹理；左右相机标定须与输入图像尺寸及实际相机一致。
+
+**本仓库不提供 ONNX、原始权重或 TensorRT engine。** 请先从各官方项目或其授权的发布渠道下载相应模型文件，阅读各自模型许可；不要把一个设备上生成的 engine 直接复制到另一台 GPU 使用。下面命令保留了项目使用的网络输入尺寸和 batch profile，输出文件名可按自己的 YAML 修改。`TRTEXEC` 可设为当前设备上 `trtexec` 的路径。
+
+```bash
+TRTEXEC=/usr/src/tensorrt/bin/trtexec
+FFS_ONNX=/path/to/official/ffs/onnx
+FP_ONNX=/path/to/authorized/foundationpose/onnx
+ENGINE_DIR=/path/to/local/engines
+mkdir -p "$ENGINE_DIR"
+
+"$TRTEXEC" --onnx="$FFS_ONNX/feature_runner.onnx" \
+  --saveEngine="$ENGINE_DIR/feature_runner_fp16.engine" --fp16 --useCudaGraph
+"$TRTEXEC" --onnx="$FFS_ONNX/post_runner.onnx" \
+  --saveEngine="$ENGINE_DIR/post_runner_fp16.engine" --fp16 --useCudaGraph
+
+"$TRTEXEC" --onnx="$FP_ONNX/scorer_hwc.onnx" \
+  --minShapes=render_input:1x160x160x6,transf_input:1x160x160x6 \
+  --optShapes=render_input:252x160x160x6,transf_input:252x160x160x6 \
+  --maxShapes=render_input:252x160x160x6,transf_input:252x160x160x6 \
+  --saveEngine="$ENGINE_DIR/scorer_hwc_dynamic_fp32.engine"
+"$TRTEXEC" --onnx="$FP_ONNX/refiner_hwc.onnx" \
+  --minShapes=render_input:1x160x160x6,transf_input:1x160x160x6 \
+  --optShapes=render_input:252x160x160x6,transf_input:252x160x160x6 \
+  --maxShapes=render_input:252x160x160x6,transf_input:252x160x160x6 \
+  --saveEngine="$ENGINE_DIR/refiner_hwc_dynamic_fp32.engine"
+```
+
+上面的 FP 命令按提供的示例生成 FP32 engine；如果打算用 FP16，请在目标设备上重新验证精度与性能，并在 YAML 中填写实际文件名。GroundingDINO 和 SAM 当前流程先从各自的 PTH 权重导出 ONNX，再运行 `sam/scripts/build_engines.sh` 转 engine；`sam/scripts/export_all.sh` 和 `sam/scripts/export_dino.sh` 提供导出入口。固定提示词 DINO 的 ONNX 必须与推理时目标词一致；当前脚本使用原版 SAM 的 `segment_anything` API，不能直接用 SAM 2 的权重替换。导出所需 Python 依赖由相应上游工程提供。
 
 ## 编译和实际部署
 
@@ -43,7 +96,7 @@ sudo apt install python3-colcon-common-extensions libopencv-dev libeigen3-dev li
 source /opt/ros/jazzy/setup.bash
 cd ffs && colcon build && cd ..
 cd fp && colcon build --packages-select foundationpose_cpp --cmake-args -DENABLE_TENSORRT=ON -DBUILD_SIMPLE_TESTS=OFF && cd ..
-cd sam && ./scripts/build_cpp.sh && ./scripts/build_ros.sh && cd ..
+cd sam && ./scripts/build_cpp.sh && ./scripts/build_ros2.sh && cd ..
 ```
 
 按对象数量复制 `fp/src/foundationpose_cpp/config/` 中的 fast 或 multi 示例 YAML，修改左右图话题、`caminfo_path`、FFS/FP engine 路径、网格、掩码目录及名称、相机内参、输出话题。自动掩码还须修改 YAML 中 `grounded_sam_multi_first_mask_node` 的对象名称、DINO/SAM engine 和输出目录，并使其输出 PNG 名称与跟踪器配置完全一致。确保模型输入与实际图像尺寸、FFS engine profile、标定一致。单目标若使用手工 PNG，可不启动自动掩码节点。
@@ -56,7 +109,7 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py \
   params_file:="$PWD/fp/src/foundationpose_cpp/config/你的配置.yaml"
 ```
 
-另一个终端启动双目相机驱动，发布与 YAML 相同的左右图话题；离线验证可用 `ros2 bag play <bag目录>`。单目标改用 `foundationpose_stereo_tracker_fast.launch.py`。启动后可用 `ros2 topic list` 和 `ros2 topic echo /foundationpose/pose` 检查位姿。默认 launch 的部分路径仍与本仓库开发机相关，部署时检查 launch/YAML，尤其是 mask 输出目录与动态库路径。没有真实相机时，可按 [本地多目标双目渲染 App 使用说明](app/SIM_STEREO_MULTI_APP.md)运行 `sim_stereo_multi_app.py`；星地场景的通信、打包与两端启动步骤见[星地多目标双目渲染 App 与部署说明](app/SATELLITE_STEREO_MULTI_APP.md)。
+另一个终端启动双目相机驱动，发布与 YAML 相同的左右图话题；离线验证可用 `ros2 bag play <bag目录>`。单目标改用 `foundationpose_stereo_tracker_fast.launch.py`。启动后可用 `ros2 topic list` 和 `ros2 topic echo /foundationpose/pose` 检查位姿。默认 launch 的部分路径仍与本仓库开发机相关，部署时检查 launch/YAML，尤其是 mask 输出目录与动态库路径。没有真实相机时，可先编译 `sim/src/sim_stereo_cpp` 并启动 `stereo_render_cpp.launch.py`，或者在相应 Python 环境运行 `app/sim_stereo_multi_app.py`；星地字节流与 ROS 图像转换入口在 `sim/src/satellite_stereo`，应用程序入口是 `app/satellite_stereo_multi_app.py`。
 
 ## 自适应滤波参数与行为
 
@@ -64,6 +117,51 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py \
 
 首帧直接以 `Register` 位姿初始化滤波器、零速度和 `1e-3 I` 协方差。每帧先预测 `T_pred = T · Exp(xi·dt)`；`Track` 使用 `T_pred` 作初值。右不变残差 `Log(T_pred⁻¹ · T_obs)` 同时用于质量评估、卡尔曼更新与门控。观测被拒绝时保留预测位姿并增加协方差；跟踪失败时也使用预测位姿。日志中的 `quality`、`mahalanobis`、`accepted` 可用于调参。相机或物体运动速度与 Python 演示不同，门限与噪声仍应结合实际数据标定。
 
-## 开源准备
+## 作者与论文引用
 
-本仓库代码可整理后发布到 GitHub，但不能把忽略列表当作完整的授权检查。发布前确认上游 FFS、FoundationPose、Grounded SAM、EasyDeploy 等代码、模型与数据各自的许可证和再分发条件；补齐本仓库许可证、作者及论文引用；检查 Git 历史和示例配置中的本机路径、私人数据、权重、engine 与密钥。当前 `.gitignore` 排除了常见模型和输出，仍需逐项人工检查已有提交历史。
+本项目的集成和部署代码由 **hc**（GitHub：`hc1600203208-ctrl`）维护；其他组件的原作者见根目录 `AUTHORS`、`NOTICE` 和各源文件版权声明。引用本部署项目时可使用 `CITATION.cff`，并按实际使用的模型引用其原论文：
+
+```bibtex
+@article{wen2026fastfoundationstereo,
+  title={{Fast-FoundationStereo}: Real-Time Zero-Shot Stereo Matching},
+  author={Bowen Wen and Shaurya Dewan and Stan Birchfield},
+  journal={CVPR},
+  year={2026}
+}
+@inproceedings{foundationposewen2024,
+  title={{FoundationPose}: Unified 6D Pose Estimation and Tracking of Novel Objects},
+  author={Bowen Wen and Wei Yang and Jan Kautz and Stan Birchfield},
+  booktitle={CVPR},
+  year={2024}
+}
+@article{liu2023grounding,
+  title={Grounding DINO: Marrying DINO with Grounded Pre-Training for Open-Set Object Detection},
+  author={Shilong Liu and Zhaoyang Zeng and Tianhe Ren and Feng Li and Hao Zhang and others},
+  journal={arXiv preprint arXiv:2303.05499},
+  year={2023}
+}
+@article{kirillov2023segany,
+  title={Segment Anything},
+  author={Alexander Kirillov and Eric Mintun and Nikhila Ravi and Hanzi Mao and Chloe Rolland and others},
+  journal={arXiv preprint arXiv:2304.02643},
+  year={2023}
+}
+```
+
+若使用 BundleSDF 重建目标网格，还应引用 [BundleSDF（CVPR 2023）](https://arxiv.org/abs/2303.14158)。上述论文描述模型方法；自适应 SE(3) 滤波和本仓库多目标部署属于本项目集成工作。
+
+## 授权与开源状态
+
+根目录 `LICENSE` 是 Apache-2.0，覆盖本仓库自有的集成、仿真和应用代码，**不覆盖或重新授权上游代码、权重、ONNX、engine 以及实验视频**。各组件的许可证和来源记录在 `NOTICE`，原始 NVIDIA 模型许可全文放在 `licenses/` 目录。`ffs/src/ffs_pkg/LICENSE` 和 `sam/LICENSE` 分别记录对应自有部署代码的 MIT 条款；`fp/src/foundationpose_cpp/LICENSE` 保留上游 Apache-2.0 条款及源文件声明。
+
+| 组件 | 当前核查结果 |
+| --- | --- |
+| Fast-FoundationStereo 模型 | NVIDIA 官方许可仅允许研究用途；下载或转换 ONNX 不会改变模型许可。仓库不提交模型文件。 |
+| FoundationPose 模型 | NVIDIA 官方许可限制为非商业研究或评估用途；仓库不提交模型文件。 |
+| FoundationPose C++ / Isaac ROS 改编代码 | 源文件带 Apache-2.0 声明，保留原版权头和组件许可证。 |
+| GroundingDINO、原版 SAM | 各自上游代码为 Apache-2.0；PTH/ONNX/engine 不随仓库分发，下载权重时还要检查其发布条款。 |
+| EasyDeployTool 代码 | 当前上游仓库未找到顶层源码许可证，仓库内有其派生文件；**尚无法确认这些文件的公开再分发授权**。取得原作者许可或改用授权清晰的实现前，不能声称整个仓库已完成无条件开源。 |
+| 实验视频、网格与数据 | 视频由项目作者提供，软件许可证不覆盖视频；视频中的人像、商标、配乐及外部数据应由素材权利人另行确认发布权。网格和数据集不随仓库分发。 |
+| 已跟踪的 DOCX 与素材 | `sim/src/satellite_stereo/` 中的三份 DOCX、示例标定和 App 背景图仍在仓库；其中一份 DOCX 含面向甲方的汇报内容，公开发布前需确认文档及素材权利、保密边界。 |
+
+本次已把除根目录 `README.md` 外的 Markdown 文件从 Git 跟踪列表移除，**本地工作区文件仍保留**。旧提交历史中仍可找到此前跟踪过的文档；如果其中含有不能公开的内容，需要另行进行历史清理并协调所有仓库副本。`.gitignore` 只防止未来误添加，不会撤销已经公开的历史。当前最明确的授权待办是 EasyDeployTool 的再分发许可，以及视频和 DOCX 素材的发布权核对。

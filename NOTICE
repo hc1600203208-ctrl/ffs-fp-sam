@@ -1,0 +1,60 @@
+This repository combines independently licensed components. The root LICENSE
+(Apache-2.0) applies to original integration, simulation and application code
+and documentation authored for this repository unless a component states a
+different license.
+It does not replace or relicense third-party code or model weights.
+Copyright 2026 hc for original repository integration where no other notice
+is present; all upstream copyright notices remain with their files.
+
+Component / origin / license or authorization status
+
+- ffs/src/ffs_pkg: ROS/TensorRT deployment code is marked MIT in its local
+  LICENSE, copyright 2026 Howard. Fast-FoundationStereo network architecture,
+  ONNX files and weights are from NVIDIA, with a separate research-only
+  NVIDIA license. See licenses/Fast-FoundationStereo-LICENSE.txt and
+  https://github.com/NVlabs/Fast-FoundationStereo . No ONNX/engine/weights are
+  distributed here.
+- fp/src/foundationpose_cpp/detection_6d_foundationpose: derived from the
+  NVIDIA Isaac ROS pose-estimation C++ code and the foundationpose_cpp
+  adaptation by zz990099. Source files carry NVIDIA Apache-2.0 headers;
+  the package's LICENSE contains Apache-2.0. Keep those headers and notices.
+  https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_pose_estimation
+  https://github.com/zz990099/foundationpose_cpp
+- fp/src/foundationpose_cpp/detection_6d_foundationpose/src/nvdiffrast/common:
+  embedded rasterization files carry NVIDIA Apache-2.0 headers as copied
+  through the Isaac ROS adaptation. The standalone NVlabs/nvdiffrast project
+  has a distinct NVIDIA Source Code License; do not treat that standalone
+  project or its assets as Apache-2.0 based on this repository.
+- fp/src/foundationpose_cpp/easy_deploy_tool: derived from EasyDeployTool by
+  zz990099. Its upstream repository did not contain a top-level source-code
+  LICENSE at the time of this audit (2026-11-05). Redistribution permission
+  for those vendored files has not been verified. This is an unresolved
+  release blocker for describing the complete repository as open source.
+  https://github.com/zz990099/EasyDeployTool
+- FoundationPose Python model and ONNX/weights: NVIDIA research/evaluation
+  non-commercial license; see licenses/FoundationPose-LICENSE.txt and
+  https://github.com/NVlabs/FoundationPose . No model files are distributed.
+- sam/: original TensorRT/ROS deployment code is marked MIT in sam/LICENSE.
+  The export scripts load GroundingDINO (Apache-2.0) and original Segment
+  Anything (Apache-2.0) from separate upstream projects. Their source and
+  weights are not distributed here.
+  https://github.com/IDEA-Research/GroundingDINO
+  https://github.com/facebookresearch/segment-anything
+- sim/ and app/: repository-authored integration code is covered by the root
+  Apache-2.0 license unless a file states otherwise. Runtime libraries such
+  as CUDA, TensorRT, ROS 2, OpenCV, Eigen, Assimp and Qt/PySide retain their
+  own license terms and are installed separately.
+- media/: four experiment videos were supplied by the project author for
+  display in README.md. They are not model assets and are not covered by the
+  software license. Third-party music, identifiable people, brands or other
+  content in them may require separate publication clearance.
+- sim/src/satellite_stereo/*.docx, app/assets/stereo_background.png, and
+  ffs/*.txt sample calibration files are non-code materials; the software
+  license does not by itself establish rights to any externally sourced
+  diagrams, text, imagery or calibration data. One DOCX explicitly contains
+  a client-facing report section, so its publication rights need review.
+
+Status: This is a provenance and license inventory, not a claim that every
+third-party permission has been obtained. In particular, the EasyDeployTool
+source-code permission and media publication rights need confirmation before
+an unrestricted open-source release can be asserted.

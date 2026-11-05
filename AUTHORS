@@ -1,0 +1,6 @@
+Project integration, ROS 2 deployment, stereo tracking, simulation, and applications:
+  hc (GitHub: hc1600203208-ctrl)
+
+The ffs_pkg package records Howard Zhang as its original maintainer.
+FoundationPose C++ and EasyDeploy components retain their upstream authorship.
+See NOTICE for component provenance and the upstream project links.

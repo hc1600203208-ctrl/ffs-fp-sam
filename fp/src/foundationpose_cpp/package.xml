@@ -5,7 +5,7 @@
   <description>FoundationPose C++ library with a ROS 2 tracking node.</description>
 
   <maintainer email="771647586@qq.com">foundationpose_cpp</maintainer>
-  <license>MIT</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
