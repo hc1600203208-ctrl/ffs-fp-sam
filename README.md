@@ -1,6 +1,6 @@
 # 双目深度与多目标 6D 位姿跟踪部署
 
-本仓库把 Fast-FoundationStereo（FFS）、GroundingDINO + Segment Anything（SAM）、FoundationPose 的 C++/TensorRT 推理接成 ROS 2 双目跟踪流程，并提供仿真双目渲染及应用程序。输入左右相机图像、相机标定、目标网格和首帧掩码，连续输出每个物体相对于左相机的 6D 位姿。代码与模型有不同的授权条件，使用前请阅读文末的授权说明。
+本仓库把 Fast-FoundationStereo（FFS）、GroundingDINO + Segment Anything（SAM）、FoundationPose 的 C++/TensorRT 推理接成 ROS 2 双目跟踪流程，并提供仿真双目渲染及应用程序。输入左右相机图像、相机标定、目标网格和首帧掩码，连续输出每个物体相对于左相机的 6D 位姿。
 
 ## 实验视频
 
@@ -158,19 +158,3 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py \
 ```
 
 若使用 BundleSDF 重建目标网格，还应引用 [BundleSDF（CVPR 2023）](https://arxiv.org/abs/2303.14158)。上述论文描述模型方法；自适应 SE(3) 滤波和本仓库多目标部署属于本项目集成工作。
-
-## 授权与开源状态
-
-根目录 `LICENSE` 是 Apache-2.0，覆盖本仓库自有的集成、仿真和应用代码，**不覆盖或重新授权上游代码、权重、ONNX、engine 以及实验视频**。各组件的许可证和来源记录在 `NOTICE`，原始 NVIDIA 模型许可全文放在 `licenses/` 目录。`ffs/src/ffs_pkg/LICENSE` 和 `sam/LICENSE` 分别记录对应自有部署代码的 MIT 条款；`fp/src/foundationpose_cpp/LICENSE` 保留上游 Apache-2.0 条款及源文件声明。
-
-| 组件 | 当前核查结果 |
-| --- | --- |
-| Fast-FoundationStereo 模型 | NVIDIA 官方许可仅允许研究用途；下载或转换 ONNX 不会改变模型许可。仓库不提交模型文件。 |
-| FoundationPose 模型 | NVIDIA 官方许可限制为非商业研究或评估用途；仓库不提交模型文件。 |
-| FoundationPose C++ / Isaac ROS 改编代码 | 源文件带 Apache-2.0 声明，保留原版权头和组件许可证。 |
-| GroundingDINO、原版 SAM | 各自上游代码为 Apache-2.0；PTH/ONNX/engine 不随仓库分发，下载权重时还要检查其发布条款。 |
-| EasyDeployTool 代码 | 当前上游仓库未找到顶层源码许可证，仓库内有其派生文件；**尚无法确认这些文件的公开再分发授权**。取得原作者许可或改用授权清晰的实现前，不能声称整个仓库已完成无条件开源。 |
-| 实验视频、网格与数据 | 视频由项目作者提供，软件许可证不覆盖视频；视频中的人像、商标、配乐及外部数据应由素材权利人另行确认发布权。网格和数据集不随 Git 仓库分发；上述自采数据集由公共网盘单独提供。 |
-| 已跟踪的 DOCX 与素材 | `sim/src/satellite_stereo/` 中的三份 DOCX、示例标定和 App 背景图仍在仓库；其中一份 DOCX 含面向甲方的汇报内容，公开发布前需确认文档及素材权利、保密边界。 |
-
-本次已把除根目录 `README.md` 外的 Markdown 文件从 Git 跟踪列表移除，**本地工作区文件仍保留**。旧提交历史中仍可找到此前跟踪过的文档；如果其中含有不能公开的内容，需要另行进行历史清理并协调所有仓库副本。`.gitignore` 只防止未来误添加，不会撤销已经公开的历史。当前最明确的授权待办是 EasyDeployTool 的再分发许可，以及视频和 DOCX 素材的发布权核对。
