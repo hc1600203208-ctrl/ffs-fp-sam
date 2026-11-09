@@ -1,5 +1,6 @@
 """Run with QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s app."""
 import os
+import math
 import tempfile
 import time
 import unittest
@@ -25,6 +26,15 @@ OBJ = "v -1 -1 0\nv 1 -1 0\nv 0 1 0\nf -3 -2 -1 # triangle\n"
 
 
 class PreviewTest(unittest.TestCase):
+    def test_rotation_error_wraps_at_180_degrees(self):
+        def values(yaw):
+            half_angle = math.radians(yaw) / 2
+            return ((0.0, 0.0, 0.0), (0.0, 0.0, yaw),
+                    (0.0, 0.0, math.sin(half_angle), math.cos(half_angle)))
+
+        self.assertEqual(app.format_error(values(-179), values(179)),
+                         ("+0.000  +0.000  +0.000", "+0.00  +0.00  +2.00", "0.000", "2.00"))
+
     def test_obj_preview_and_invalid_geometry(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "mesh.obj"
@@ -158,13 +168,20 @@ class MonitorIntegrationTest(unittest.TestCase):
                     self.assertIsNotNone(window.preview_labels[key].pixmap(), key)
                 self.assertEqual(window.pose_table.item(3, 2).text(), "0.000  0.000  2.250")
                 self.assertEqual(window.pose_table.item(1, 2).text(), "0.000  0.000  1.000")
+                self.assertEqual(window.pose_table.item(1, 1).text(), "Truth")
                 self.assertEqual(window.pose_table.item(2, 5).text(), "0.250")
                 self.assertEqual(window.pose_table.item(2, 6).text(), "0.00")
+                self.assertEqual(window.pose_table.item(2, 3).text(), "+0.00  +0.00  +0.00")
                 self.assertEqual(window.pose_table.item(0, 4).text(), "0.000  0.000  0.000  1.000")
                 self.assertNotEqual(window.motion_table.cellWidget(0, 1), window.motion_table.cellWidget(1, 1))
                 window.motion_table.cellWidget(0, 1).setValue(0.7)
                 self.assertNotEqual(window.motion_table.cellWidget(0, 1).value(),
                                     window.motion_table.cellWidget(1, 1).value())
+                with node.frame_lock:
+                    node.truth_by_stamp.clear()
+                window._show_pose()
+                self.assertEqual(window.pose_table.item(1, 1).text(), "Latest")
+                self.assertEqual(window.pose_table.item(2, 3).text(), "—")
                 for label in window.model_labels.values():
                     self.assertIsNotNone(label.pixmap())
                 window._show_pose()

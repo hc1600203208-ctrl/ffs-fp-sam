@@ -402,7 +402,8 @@ class SatelliteWindow(MultiSimWindow):
             name = self.pose_table.item(table_row, 0).text()
             estimate = poses.get(name)
             truth = truths.get(estimate[0], {}).get(name) if estimate else None
-            shown_truth = latest_truth.get(name)
+            shown_truth = truth or latest_truth.get(name)
+            self.pose_table.item(table_row + 1, 1).setText("Truth" if truth else "Latest")
             if estimate:
                 for column, value in enumerate(format_pose(estimate[1]), 2):
                     self.pose_table.item(table_row, column).setText(value)
@@ -410,12 +411,13 @@ class SatelliteWindow(MultiSimWindow):
                 for column, value in enumerate(format_pose(shown_truth), 2):
                     self.pose_table.item(table_row + 1, column).setText(value)
             if estimate and truth:
-                delta_xyz, delta_t, delta_r = format_error(estimate[1], truth)
+                delta_xyz, delta_rpy, delta_t, delta_r = format_error(estimate[1], truth)
                 self.pose_table.item(table_row + 2, 2).setText(delta_xyz)
+                self.pose_table.item(table_row + 2, 3).setText(delta_rpy)
                 self.pose_table.item(table_row + 2, 5).setText(delta_t)
                 self.pose_table.item(table_row + 2, 6).setText(delta_r)
             else:
-                for column in (2, 5, 6):
+                for column in (2, 3, 5, 6):
                     self.pose_table.item(table_row + 2, column).setText("—")
         names = [self.mesh_selector.itemText(index) for index in range(self.mesh_selector.count())]
         masks = [frames.get(f"mask:{name}") for name in names]
@@ -593,9 +595,12 @@ def format_pose(values):
 
 def format_error(estimate, truth):
     delta = tuple(a - b for a, b in zip(estimate[0], truth[0]))
+    delta_rpy = tuple((a - b + 180.0) % 360.0 - 180.0
+                      for a, b in zip(estimate[1], truth[1]))
     dot = abs(sum(a * b for a, b in zip(estimate[2], truth[2])))
     angle = math.degrees(2 * math.acos(min(1.0, max(0.0, dot))))
     return ("  ".join(f"{value:+.3f}" for value in delta),
+            "  ".join(f"{value:+.2f}" for value in delta_rpy),
             f"{math.sqrt(sum(value * value for value in delta)):.3f}", f"{angle:.2f}")
 
 
