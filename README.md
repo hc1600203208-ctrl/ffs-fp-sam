@@ -120,6 +120,31 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py \
 
 另一个终端启动双目相机驱动，发布与 YAML 相同的左右图话题；离线验证可用 `ros2 bag play <bag目录>`。单目标改用 `foundationpose_stereo_tracker_fast.launch.py`。启动后可用 `ros2 topic list` 和 `ros2 topic echo /foundationpose/pose` 检查位姿。默认 launch 的部分路径仍与本仓库开发机相关，部署时检查 launch/YAML，尤其是 mask 输出目录与动态库路径。没有真实相机时，可先编译 `sim/src/sim_stereo_cpp` 并启动 `stereo_render_cpp.launch.py`，或者在相应 Python 环境运行 `app/sim_stereo_multi_app.py`；星地字节流与 ROS 图像转换入口在 `sim/src/satellite_stereo`，应用程序入口是 `app/satellite_stereo_multi_app.py`。
 
+### 星地多目标 App
+
+完成 `satellite_stereo`、`foundationpose_cpp` 和 SAM 的编译后，分别在三个终端运行。先启动卫星渲染节点和 App，在 App 的“Parameters & control”页加载目标配置，给每个物体设置独立的初始位姿、平移/旋转振幅和频率，再点击“Start satellite renderer”。App 会启动地面 `stereo_bytes_to_images_node`，还原双目图像；此时“Tracking monitor”页已能显示原始左图，不依赖 FoundationPose。随后启动跟踪器，合成图、首帧掩码和位姿才会出现。
+
+```bash
+# 终端 1：卫星渲染端
+source /opt/ros/jazzy/setup.bash
+source /home/hc/weizi/ffs+fp+sam/sim/install/setup.bash
+ros2 run satellite_stereo satellite_render_node
+
+# 终端 2：地面 App；启动后在界面中下发配置并开始渲染
+source /opt/ros/jazzy/setup.bash
+source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
+source /home/hc/weizi/ffs+fp+sam/sim/install/setup.bash
+python3 /home/hc/weizi/ffs+fp+sam/app/satellite_stereo_multi_app.py
+
+# 终端 3：需要跟踪结果时再启动
+source /opt/ros/jazzy/setup.bash
+source /home/hc/weizi/ffs+fp+sam/fp/install/setup.bash
+source /home/hc/weizi/ffs+fp+sam/sam/ros2_install/setup.bash
+ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
+```
+
+卫星端以配置中的物体顺序向 `/satellite/ground_truth` 发布 `geometry_msgs/PoseArray`，时间戳与 `/satellite/stereo_bytes` 中的双目帧相同。真值为原始 mesh 原点在左相机光学坐标系中的位姿；跟踪器的 `pose_frame_id` 若在 YAML 中自定义，比较误差前须确认它仍表示同一左相机坐标系。App 持续显示最新真值，按图像时间戳匹配跟踪位姿和对应帧的真值来计算误差：`ΔXYZ = 跟踪平移 − 真值平移`、`|Δt|` 为三维平移误差范数、`ΔR` 为四元数相对旋转角。未匹配到真值的跟踪帧，误差显示为 `—`。旋转同时显示四元数 `(x,y,z,w)` 和固定轴 **XYZ** 欧拉角，即 `R = Rz(yaw) · Ry(pitch) · Rx(roll)`。
+
 ## 自适应滤波参数与行为
 
 两个跟踪节点使用同一套 YAML 参数，默认值对齐 `run_demo_adaptive_filter.py` 的当前参数。`filter_fps` 为时间戳不可用时的回退帧率；正常运行时按相邻左图时间戳求 `dt`。`filter_q_pos/q_rot/q_vel/q_omega` 为 12 维状态预测噪声；`filter_sigma_pos_obs/sigma_rot_obs` 为观测标准差；`filter_sigma_pos_motion/sigma_rot_motion` 控制残差到质量分数的衰减；`filter_min_quality` 限制质量下界；`filter_gate_threshold` 是马氏距离平方门限；`filter_reject_cov_increase` 是拒绝观测时增加的协方差。`filter_enable_gating` 与 `filter_enable_adaptive_R` 可分别关闭门控和质量驱动的观测噪声调整。

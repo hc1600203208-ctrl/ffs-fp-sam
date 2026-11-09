@@ -11,12 +11,11 @@
 namespace sct {
 struct Object {
   std::string name, mesh_path;
-  std::array<double, 6> pose;
+  std::array<double, 6> pose{}, amplitudes{}, frequencies{};
 };
 struct Config {
   uint32_t width, height, bytes_per_second;
   double fps;
-  std::array<double, 6> amplitudes, frequencies;
   std::string calibration_path;
   std::vector<Object> objects;
 };
@@ -67,15 +66,25 @@ inline Request parse(const std::vector<uint8_t>& data) {
   auto& c=request.config;
   c.width=reader.u32(); c.height=reader.u32(); c.fps=reader.f64(); c.bytes_per_second=reader.u32();
   const uint16_t object_count=reader.u16();
-  if(reader.u16()!=0) throw std::invalid_argument("nonzero SCT1 reserved field");
+  const uint16_t version=reader.u16();
+  if(version>1) throw std::invalid_argument("unsupported SCT1 configuration version");
   if(c.width==0||c.height==0||c.width>4096||c.height>4096||c.fps<=0||c.fps>1000||c.bytes_per_second==0||
      object_count==0||object_count>32) throw std::invalid_argument("invalid SCT1 rendering parameters");
-  for(auto& n:c.amplitudes) n=reader.f64();
-  for(auto& n:c.frequencies) n=reader.f64();
+  std::array<double,6> shared_amplitudes{}, shared_frequencies{};
+  if(version==0) {
+    for(auto& n:shared_amplitudes) n=reader.f64();
+    for(auto& n:shared_frequencies) n=reader.f64();
+  }
   c.calibration_path=reader.string();
   for(uint16_t i=0;i<object_count;++i) {
     Object object; object.name=reader.string();object.mesh_path=reader.string();
     for(auto& n:object.pose) n=reader.f64();
+    if(version==0) {
+      object.amplitudes=shared_amplitudes;object.frequencies=shared_frequencies;
+    } else {
+      for(auto& n:object.amplitudes) n=reader.f64();
+      for(auto& n:object.frequencies) n=reader.f64();
+    }
     c.objects.push_back(std::move(object));
   }
   if(reader.remaining()!=0) throw std::invalid_argument("trailing SCT1 data");

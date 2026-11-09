@@ -12,7 +12,7 @@ import rclpy
 import yaml
 from PyQt5 import QtWidgets
 from cv_bridge import CvBridge
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Pose, PoseArray, PoseStamped
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
@@ -104,19 +104,43 @@ class MonitorIntegrationTest(unittest.TestCase):
                     publisher.publish(bridge.cv2_to_imgmsg(mask, "mono8"))
                 with patch.object(app, "DEFAULT_CONFIG", config_path):
                     window = app.SatelliteWindow(node)
+                node.set_truth_objects(["Blue carton", "Gold"])
                 window.tabs.setCurrentIndex(1)
                 window.resize(1200, 800)
                 window.show()
+                left = producer.create_publisher(Image, "/left/image_raw",
+                    QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+                for _ in range(40):
+                    left.publish(bridge.cv2_to_imgmsg(np.full((48, 64, 3), (0, 255, 0), np.uint8), "bgr8"))
+                    executor.spin_once(timeout_sec=0.02)
+                    application.processEvents()
+                    window._show_pose()
+                    if "left" in node.frames:
+                        break
+                self.assertIn("left", node.frames)
+                self.assertIsNotNone(window.preview_labels["left"].pixmap())
+                self.assertIsNone(window.preview_labels["combined"].pixmap())
                 combined = producer.create_publisher(Image, params["combined_visualization_topic"],
                     QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT))
+                truth_pub = producer.create_publisher(PoseArray, "/satellite/ground_truth", 10)
                 poses = [producer.create_publisher(PoseStamped, params["pose_topic"] + "/" + name, 1)
                          for name in ("blue_carton", "gold")]
                 rgb = np.full((48, 192, 3), (255, 0, 0), np.uint8)
+                stamp = producer.get_clock().now().to_msg()
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
                     combined.publish(bridge.cv2_to_imgmsg(rgb, "bgr8"))
+                    truth = PoseArray()
+                    truth.header.stamp = stamp
+                    for _ in range(2):
+                        pose = Pose()
+                        pose.position.z = 1.0
+                        pose.orientation.w = 1.0
+                        truth.poses.append(pose)
+                    truth_pub.publish(truth)
                     for index, publisher in enumerate(poses):
                         pose_message = PoseStamped()
+                        pose_message.header.stamp = stamp
                         pose_message.pose.position.z = 1.25 + index
                         pose_message.pose.orientation.w = 1.0
                         publisher.publish(pose_message)
@@ -125,14 +149,22 @@ class MonitorIntegrationTest(unittest.TestCase):
                     window._show_pose()
                     if (all(key in node.frames for key in ("combined", "mask:Blue carton", "mask:Gold"))
                             and len(node.poses) == 2 and
+                            all(value[0] in node.truth_by_stamp for value in node.poses.values()) and
                             all(hasattr(label, "source_pixmap") for label in window.model_labels.values())):
                         break
                 self.assertEqual(len(node.poses), 2)
                 self.assertEqual(tuple(node.frames["combined"][0, 0]), (255, 0, 0))
                 for key in ("combined", "mask"):
                     self.assertIsNotNone(window.preview_labels[key].pixmap(), key)
-                self.assertEqual(window.pose_table.item(1, 3).text(), "2.250")
-                self.assertEqual(window.pose_table.item(0, 6).text(), "0.000")
+                self.assertEqual(window.pose_table.item(3, 2).text(), "0.000  0.000  2.250")
+                self.assertEqual(window.pose_table.item(1, 2).text(), "0.000  0.000  1.000")
+                self.assertEqual(window.pose_table.item(2, 5).text(), "0.250")
+                self.assertEqual(window.pose_table.item(2, 6).text(), "0.00")
+                self.assertEqual(window.pose_table.item(0, 4).text(), "0.000  0.000  0.000  1.000")
+                self.assertNotEqual(window.motion_table.cellWidget(0, 1), window.motion_table.cellWidget(1, 1))
+                window.motion_table.cellWidget(0, 1).setValue(0.7)
+                self.assertNotEqual(window.motion_table.cellWidget(0, 1).value(),
+                                    window.motion_table.cellWidget(1, 1).value())
                 for label in window.model_labels.values():
                     self.assertIsNotNone(label.pixmap())
                 window._show_pose()

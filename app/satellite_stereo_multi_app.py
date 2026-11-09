@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Ground control for the CPU satellite stereo renderer and byte receiver."""
 import os
+import math
+from collections import OrderedDict
 from html import escape
 import shutil
 import signal
@@ -17,7 +19,7 @@ import cv2
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseArray, PoseStamped
 from sensor_msgs.msg import Image
 from std_msgs.msg import UInt8MultiArray
 from rclpy.executors import SingleThreadedExecutor
@@ -37,6 +39,9 @@ class TrackingNode(Node):
     def __init__(self):
         super().__init__("satellite_stereo_app")
         self.poses = {}
+        self.truth_by_stamp = OrderedDict()
+        self.latest_truth = {}
+        self.object_names = []
         self.bridge = CvBridge()
         self.frames = {}
         self.frame_lock = threading.Lock()
@@ -59,11 +64,18 @@ class TrackingNode(Node):
         self.control_publisher.publish(UInt8MultiArray(data=list(command(kind, request_id, payload))))
 
     def _pose(self, name, message):
-        p = message.pose.position
-        q = message.pose.orientation
-        roll, pitch, yaw = quaternion_to_rpy_degrees(q.x, q.y, q.z, q.w)
         with self.frame_lock:
-            self.poses[name] = (p.x, p.y, p.z, roll, pitch, yaw)
+            self.poses[name] = (stamp_key(message.header.stamp), pose_values(message.pose))
+
+    def _truth(self, message):
+        with self.frame_lock:
+            if len(message.poses) != len(self.object_names):
+                return
+            values = {name: pose_values(pose) for name, pose in zip(self.object_names, message.poses)}
+            self.truth_by_stamp[stamp_key(message.header.stamp)] = values
+            self.latest_truth = values
+            while len(self.truth_by_stamp) > 256:
+                self.truth_by_stamp.popitem(last=False)
 
     def _image(self, key, message):
         try:
@@ -81,11 +93,18 @@ class TrackingNode(Node):
         with self.frame_lock:
             self.frames.clear()
             self.poses.clear()
+            self.truth_by_stamp.clear()
+            self.latest_truth.clear()
         # Best effort accepts both reliable and best effort image publishers.
         qos = rclpy.qos.QoSProfile(depth=1, reliability=rclpy.qos.ReliabilityPolicy.BEST_EFFORT)
         topic = parameters.get("combined_visualization_topic", "/foundationpose/combined_visualization")
         self.view_subscriptions.append(self.create_subscription(
             Image, topic, lambda msg: self._image("combined", msg), qos))
+        self.view_subscriptions.append(self.create_subscription(
+            Image, parameters.get("left_image_topic", "/left/image_raw"),
+            lambda msg: self._image("left", msg), qos))
+        self.view_subscriptions.append(self.create_subscription(
+            PoseArray, "/satellite/ground_truth", self._truth, 10))
         self.mask_prefix = mask_parameters.get("mask_topic_prefix", "/first_masks").rstrip("/")
         self.pose_prefix = parameters.get("pose_topic", "/foundationpose/pose").rstrip("/")
         return topic
@@ -112,6 +131,8 @@ class TrackingNode(Node):
         self.pose_subscriptions = []
         with self.frame_lock:
             self.poses.clear()
+            self.truth_by_stamp.clear()
+            self.latest_truth.clear()
         for name, _mesh in objects:
             try:
                 self.pose_subscriptions.append(self.create_subscription(
@@ -119,6 +140,12 @@ class TrackingNode(Node):
                     lambda msg, name=name: self._pose(name, msg), 10))
             except InvalidTopicNameException as error:
                 self.get_logger().warning(f"Cannot subscribe to pose for {name}: {error}")
+
+    def set_truth_objects(self, names):
+        with self.frame_lock:
+            self.object_names = list(names)
+            self.truth_by_stamp.clear()
+            self.latest_truth.clear()
 
     def set_background(self, _image):
         pass
@@ -154,6 +181,9 @@ class SatelliteWindow(MultiSimWindow):
         self.mesh_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mesh-preview")
         self.mesh_jobs = {}
         self.mesh_selector = QtWidgets.QComboBox()
+        self.motion_defaults = ([0.05, 0.05, 0.02, 10.0, 10.0, 20.0],
+                                [0.15, 0.12, 0.10, 0.10, 0.08, 0.06])
+        self.motion_values = {}
         self.objects.itemChanged.connect(self._object_changed)
         self.objects.model().rowsInserted.connect(self._schedule_object_sync)
         self.objects.model().rowsRemoved.connect(self._schedule_object_sync)
@@ -183,12 +213,21 @@ class SatelliteWindow(MultiSimWindow):
         speed_controls.addWidget(self.link_input)
         speed_controls.addStretch()
         motion_layout = self.start_button.parentWidget().layout()
-        motion_layout.insertLayout(3, speed_controls)
+        for _ in range(3):
+            clear_layout(motion_layout.takeAt(0).layout())
+        self.motion_table = QtWidgets.QTableWidget(0, 13)
+        self.motion_table.setHorizontalHeaderLabels((
+            "Target", "Amp X m", "Amp Y m", "Amp Z m", "Amp Roll °", "Amp Pitch °", "Amp Yaw °",
+            "Freq X Hz", "Freq Y Hz", "Freq Z Hz", "Freq Roll Hz", "Freq Pitch Hz", "Freq Yaw Hz"))
+        self.motion_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        self.motion_table.setMinimumHeight(175)
+        motion_layout.insertWidget(0, self.motion_table)
+        motion_layout.insertLayout(1, speed_controls)
         satellite_path = QtWidgets.QHBoxLayout()
         satellite_path.addWidget(QtWidgets.QLabel("Satellite calibration"))
         self.satellite_calibration = QtWidgets.QLineEdit()
         satellite_path.addWidget(self.satellite_calibration)
-        motion_layout.insertLayout(4, satellite_path)
+        motion_layout.insertLayout(2, satellite_path)
 
         controls = self.takeCentralWidget()
         controls_scroll = QtWidgets.QScrollArea()
@@ -203,9 +242,12 @@ class SatelliteWindow(MultiSimWindow):
         selector_row.addWidget(QtWidgets.QLabel("Target"))
         selector_row.addWidget(self.mesh_selector, 1)
         root.addLayout(selector_row)
+        root.addWidget(QtWidgets.QLabel("Satellite left image (available before the tracker starts)"))
+        self.preview_labels["left"] = self._image_label("Waiting for satellite left image")
+        root.addWidget(self.preview_labels["left"], 2)
         root.addWidget(QtWidgets.QLabel("Tracker output: left image | pose overlay | depth (0.3–5.0 m)"))
         self.preview_labels["combined"] = self._image_label("Waiting for tracker composite")
-        root.addWidget(self.preview_labels["combined"], 3)
+        root.addWidget(self.preview_labels["combined"], 2)
         bottom = QtWidgets.QHBoxLayout()
         root.addLayout(bottom, 2)
         mask_column = QtWidgets.QVBoxLayout()
@@ -222,10 +264,14 @@ class SatelliteWindow(MultiSimWindow):
         model_column.addLayout(self.models_layout, 1)
         bottom.addLayout(model_column, 2)
         self.pose_table = QtWidgets.QTableWidget(0, 7)
-        self.pose_table.setHorizontalHeaderLabels(("Target", "X m", "Y m", "Z m", "Roll °", "Pitch °", "Yaw °"))
+        self.pose_table.setHorizontalHeaderLabels((
+            "Target", "Type", "XYZ (m)", "RPY °\n固定轴 XYZ / Rz·Ry·Rx", "q (x y z w)",
+            "|Δt| (m)", "ΔR (°)"))
         self.pose_table.verticalHeader().setVisible(False)
-        self.pose_table.setMaximumHeight(140)
-        self.pose_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        self.pose_table.setMinimumHeight(210)
+        for column, width in enumerate((95, 60, 165, 155, 205, 90, 85)):
+            self.pose_table.setColumnWidth(column, width)
+        self.pose_table.horizontalHeader().setStretchLastSection(True)
         root.addWidget(self.pose_table)
         self.tabs.addTab(views, "Tracking monitor")
 
@@ -274,6 +320,11 @@ class SatelliteWindow(MultiSimWindow):
             QtCore.QTimer.singleShot(0, self._sync_objects)
 
     def _sync_objects(self):
+        for row in range(self.motion_table.rowCount()):
+            item = self.motion_table.item(row, 0)
+            if item is not None:
+                self.motion_values[item.text()] = [self.motion_table.cellWidget(row, column).value()
+                                                   for column in range(1, 13)]
         objects = []
         for row in range(self.objects.rowCount()):
             name, mesh = (self.objects.item(row, column) for column in (0, 1))
@@ -295,15 +346,29 @@ class SatelliteWindow(MultiSimWindow):
             if cell.widget():
                 cell.widget().deleteLater()
         self.model_labels = {}
-        self.pose_table.setRowCount(len(objects))
+        self.pose_table.setRowCount(len(objects) * 3)
+        self.motion_table.setRowCount(len(objects))
         for row, (name, mesh) in enumerate(objects):
+            self.motion_table.setItem(row, 0, QtWidgets.QTableWidgetItem(name))
+            values = self.motion_values.get(name, [*self.motion_defaults[0], *self.motion_defaults[1]])
+            for column, value in enumerate(values, 1):
+                spin = QtWidgets.QDoubleSpinBox()
+                spin.setRange(0.0, 360.0 if 4 <= column <= 6 else 100.0 if column <= 3 else 20.0)
+                spin.setDecimals(3)
+                spin.setSingleStep(0.01)
+                spin.setValue(value)
+                self.motion_table.setCellWidget(row, column, spin)
             label = self._image_label(f"Loading {name}...")
             label.setToolTip(mesh)
             self.models_layout.addWidget(label, 1)
             self.model_labels[name] = label
-            self.pose_table.setItem(row, 0, QtWidgets.QTableWidgetItem(name))
-            for column in range(1, 7):
-                self.pose_table.setItem(row, column, QtWidgets.QTableWidgetItem("—"))
+            for offset, kind in enumerate(("Estimate", "Truth", "Error")):
+                table_row = row * 3 + offset
+                self.pose_table.setRowHeight(table_row, 25)
+                self.pose_table.setItem(table_row, 0, QtWidgets.QTableWidgetItem(name))
+                self.pose_table.setItem(table_row, 1, QtWidgets.QTableWidgetItem(kind))
+                for column in range(2, 7):
+                    self.pose_table.setItem(table_row, column, QtWidgets.QTableWidgetItem("—"))
             if mesh not in self.mesh_jobs:
                 self.mesh_jobs[mesh] = self.mesh_pool.submit(render_mesh_preview, mesh)
         self.preview_labels["mask"].setText("Waiting for first-frame masks")
@@ -330,11 +395,28 @@ class SatelliteWindow(MultiSimWindow):
         with self.ros_node.frame_lock:
             frames = dict(self.ros_node.frames)
             poses = dict(self.ros_node.poses)
-        for row in range(self.pose_table.rowCount()):
-            values = poses.get(self.pose_table.item(row, 0).text())
-            if values:
-                for column, value in enumerate(values, 1):
-                    self.pose_table.item(row, column).setText(f"{value:.3f}")
+            truths = dict(self.ros_node.truth_by_stamp)
+            latest_truth = dict(self.ros_node.latest_truth)
+        for row in range(self.pose_table.rowCount() // 3):
+            table_row = row * 3
+            name = self.pose_table.item(table_row, 0).text()
+            estimate = poses.get(name)
+            truth = truths.get(estimate[0], {}).get(name) if estimate else None
+            shown_truth = latest_truth.get(name)
+            if estimate:
+                for column, value in enumerate(format_pose(estimate[1]), 2):
+                    self.pose_table.item(table_row, column).setText(value)
+            if shown_truth:
+                for column, value in enumerate(format_pose(shown_truth), 2):
+                    self.pose_table.item(table_row + 1, column).setText(value)
+            if estimate and truth:
+                delta_xyz, delta_t, delta_r = format_error(estimate[1], truth)
+                self.pose_table.item(table_row + 2, 2).setText(delta_xyz)
+                self.pose_table.item(table_row + 2, 5).setText(delta_t)
+                self.pose_table.item(table_row + 2, 6).setText(delta_r)
+            else:
+                for column in (2, 5, 6):
+                    self.pose_table.item(table_row + 2, column).setText("—")
         names = [self.mesh_selector.itemText(index) for index in range(self.mesh_selector.count())]
         masks = [frames.get(f"mask:{name}") for name in names]
         self.mask_legend.setText("   ".join(
@@ -343,12 +425,12 @@ class SatelliteWindow(MultiSimWindow):
             for index, (name, mask) in enumerate(zip(names, masks))
             for color in (MASK_COLORS[index % len(MASK_COLORS)],)) +
             "   <span style=\"color:white;background:#555\">■</span> overlap")
-        for key in ("combined", "mask"):
-            frame = frames.get(key) if key == "combined" else None
-            source = frame if key == "combined" else tuple(masks)
+        for key in ("left", "combined", "mask"):
+            frame = frames.get(key) if key != "mask" else None
+            source = frame if key != "mask" else tuple(masks)
             label = self.preview_labels[key]
             previous, size = self._shown_frames.get(key, (None, None))
-            unchanged = (frame is previous) if key == "combined" else (
+            unchanged = (frame is previous) if key != "mask" else (
                 previous is not None and len(previous) == len(source) and
                 all(old is new for old, new in zip(previous, source)))
             if unchanged and size == label.size():
@@ -379,14 +461,18 @@ class SatelliteWindow(MultiSimWindow):
     def _start_process(self, start_motion):
         if self.pending is not None:
             return
+        self._sync_objects()
         if self.objects.rowCount() < 2 or self.calibration is None:
             raise ValueError("Load at least two objects and a tracker calibration")
         objects = [(self.objects.item(r, 0).text().strip(),
                     self.objects.item(r, 1).text().strip(),
-                    [self.objects.cellWidget(r, c).value() for c in range(2, 8)])
+                    [self.objects.cellWidget(r, c).value() for c in range(2, 8)],
+                    [self.motion_table.cellWidget(r, c).value() for c in range(1, 7)],
+                    [self.motion_table.cellWidget(r, c).value() for c in range(7, 13)])
                    for r in range(self.objects.rowCount())]
-        if len({name for name, _, _ in objects}) != len(objects):
+        if len({item[0] for item in objects}) != len(objects):
             raise ValueError("Object names must be unique")
+        self.pending_names = [item[0] for item in objects]
         ros2 = shutil.which("ros2")
         if not ros2:
             raise RuntimeError("Source the ROS 2 and satellite_stereo workspaces first")
@@ -401,8 +487,6 @@ class SatelliteWindow(MultiSimWindow):
         receiver_settings = (str(background), self.background_disparity.value(), str(self.calibration))
         self.pending_config = configuration(
             640, 480, self.fps_input.value(), int(self.link_input.value() * 1000000),
-            [w.value() for w in self.translation_amplitude_inputs + self.rotation_amplitude_inputs],
-            [w.value() for w in self.frequency_inputs],
             self.satellite_calibration.text().strip(), objects)
         if self.receiver is not None and self.receiver.poll() is None and receiver_settings != getattr(self, "receiver_settings", None):
             os.killpg(self.receiver.pid, signal.SIGINT)
@@ -444,6 +528,7 @@ class SatelliteWindow(MultiSimWindow):
             self._set_motion_state(False, "Stopped")
             self._request(1, "configure", self.pending_config)
         elif stage == "configure":
+            self.ros_node.set_truth_objects(self.pending_names)
             self._request(2, "start")
         elif stage == "start":
             self._set_motion_state(True, "Rendering")
@@ -484,6 +569,44 @@ def sanitize_topic_name(name):
     return "".join(chr(byte).lower() if byte < 128 and chr(byte).isalnum()
                    else chr(byte) if byte in (45, 95) else "_"
                    for byte in name.encode("utf-8")) or "object"
+
+
+def stamp_key(stamp):
+    return stamp.sec, stamp.nanosec
+
+
+def pose_values(pose):
+    p, q = pose.position, pose.orientation
+    norm = math.sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w)
+    if norm == 0:
+        raise ValueError("zero-length pose quaternion")
+    quaternion = tuple(value / norm for value in (q.x, q.y, q.z, q.w))
+    return ((p.x, p.y, p.z), quaternion_to_rpy_degrees(*quaternion), quaternion)
+
+
+def format_pose(values):
+    position, rpy, quaternion = values
+    return ("  ".join(f"{value:.3f}" for value in position),
+            "  ".join(f"{value:.2f}" for value in rpy),
+            "  ".join(f"{value:.3f}" for value in quaternion))
+
+
+def format_error(estimate, truth):
+    delta = tuple(a - b for a, b in zip(estimate[0], truth[0]))
+    dot = abs(sum(a * b for a, b in zip(estimate[2], truth[2])))
+    angle = math.degrees(2 * math.acos(min(1.0, max(0.0, dot))))
+    return ("  ".join(f"{value:+.3f}" for value in delta),
+            f"{math.sqrt(sum(value * value for value in delta)):.3f}", f"{angle:.2f}")
+
+
+def clear_layout(layout):
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget() is not None:
+            item.widget().hide()
+            item.widget().deleteLater()
+        elif item.layout() is not None:
+            clear_layout(item.layout())
 
 
 def image_pixmap(image):

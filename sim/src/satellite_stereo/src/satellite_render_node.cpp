@@ -1,5 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/u_int8_multi_array.hpp>
+#include <geometry_msgs/msg/pose_array.hpp>
 #include <Eigen/Dense>
 #include <png.h>
 #include <algorithm>
@@ -143,6 +144,7 @@ class SatelliteRenderer: public rclcpp::Node {
     auto rate=declare_parameter<int>("bytes_per_second",2000000);
     auto calibration=declare_parameter<std::string>("calibration_path","");
     publisher_=create_publisher<std_msgs::msg::UInt8MultiArray>("/satellite/stereo_bytes",128);
+    truth_publisher_=create_publisher<geometry_msgs::msg::PoseArray>("/satellite/ground_truth",10);
     ack_publisher_=create_publisher<std_msgs::msg::UInt8MultiArray>("/satellite/control_ack_bytes",10);
     control_sub_=create_subscription<std_msgs::msg::UInt8MultiArray>("/satellite/control_bytes",10,
       [this](std_msgs::msg::UInt8MultiArray::ConstSharedPtr msg){handle_control(msg->data);});
@@ -152,11 +154,12 @@ class SatelliteRenderer: public rclcpp::Node {
       sct::Config config{};
       config.width=width;config.height=height;config.fps=fps;config.bytes_per_second=rate;
       config.calibration_path=calibration;
-      std::copy(amp.begin(),amp.end(),config.amplitudes.begin());
-      std::copy(freq.begin(),freq.end(),config.frequencies.begin());
       for(size_t i=0;i<paths.size();++i){sct::Object object;
         object.name="object_"+std::to_string(i);object.mesh_path=paths[i];
-        std::copy_n(poses.begin()+i*6,6,object.pose.begin());config.objects.push_back(std::move(object));}
+        std::copy_n(poses.begin()+i*6,6,object.pose.begin());
+        std::copy(amp.begin(),amp.end(),object.amplitudes.begin());
+        std::copy(freq.begin(),freq.end(),object.frequencies.begin());
+        config.objects.push_back(std::move(object));}
       apply_config(config);start();
     } else RCLCPP_INFO(get_logger(),"Waiting for SCT1 configuration on /satellite/control_bytes");
   }
@@ -167,11 +170,12 @@ class SatelliteRenderer: public rclcpp::Node {
        config.bytes_per_second>static_cast<uint32_t>(std::numeric_limits<int>::max())||
        config.objects.empty()) throw std::invalid_argument("invalid rendering parameters");
     auto finite=[](double n){return std::isfinite(n);};
-    if(!std::all_of(config.amplitudes.begin(),config.amplitudes.end(),finite)||
-       !std::all_of(config.frequencies.begin(),config.frequencies.end(),finite))
-      throw std::invalid_argument("invalid motion parameters");
     for(const auto& object:config.objects)
-      if(object.mesh_path.empty()||!std::all_of(object.pose.begin(),object.pose.end(),finite))
+      if(object.mesh_path.empty()||!std::all_of(object.pose.begin(),object.pose.end(),finite)||
+         !std::all_of(object.amplitudes.begin(),object.amplitudes.end(),finite)||
+         !std::all_of(object.frequencies.begin(),object.frequencies.end(),finite)||
+         std::any_of(object.amplitudes.begin(),object.amplitudes.end(),[](double n){return n<0;})||
+         std::any_of(object.frequencies.begin(),object.frequencies.end(),[](double n){return n<0;}))
         throw std::invalid_argument("invalid object parameters");
     auto n=numbers(config.calibration_path);
     std::array<Camera,2> cameras;
@@ -179,12 +183,10 @@ class SatelliteRenderer: public rclcpp::Node {
     cameras[1]={float(n[15]),float(n[19]),float(n[17]),float(n[20]),Eigen::Matrix3f::Identity(),Eigen::Vector3f::Zero()};
     for(int r=0;r<3;++r) for(int c=0;c<3;++c) cameras[1].rotation(r,c)=n[29+r*3+c];
     for(int i=0;i<3;++i) cameras[1].translation[i]=n[38+i];
-    std::vector<Mesh> meshes;std::vector<double> poses;
+    std::vector<Mesh> meshes;std::vector<sct::Object> objects;
     for(const auto& object:config.objects){meshes.push_back(load_mesh(object.mesh_path));
-      poses.insert(poses.end(),object.pose.begin(),object.pose.end());}
-    cameras_=std::move(cameras);meshes_=std::move(meshes);poses_=std::move(poses);
-    amp_.assign(config.amplitudes.begin(),config.amplitudes.end());
-    freq_.assign(config.frequencies.begin(),config.frequencies.end());
+      objects.push_back(object);}
+    cameras_=std::move(cameras);meshes_=std::move(meshes);objects_=std::move(objects);
     width_=config.width;height_=config.height;fps_=config.fps;rate_=config.bytes_per_second;
     frame_=0;configured_=true;
     RCLCPP_INFO(get_logger(),"Configured %zu objects, %dx%d at %.2f FPS, %d bytes/s",
@@ -222,16 +224,31 @@ class SatelliteRenderer: public rclcpp::Node {
     auto frame_start=Clock::now();
     double t=std::chrono::duration<double>(Clock::now()-started_).count();
     std::vector<uint16_t> pixels(2*size_t(width_)*height_,0);
+    auto stamp=now();
+    geometry_msgs::msg::PoseArray truth;
+    truth.header.stamp=stamp;
+    truth.header.frame_id="stereo_left_optical_frame";
+    std::vector<Eigen::Vector3f> positions;
+    std::vector<Eigen::Matrix3f> rotations;
+    positions.reserve(objects_.size());rotations.reserve(objects_.size());truth.poses.reserve(objects_.size());
+    for(const auto& object:objects_) {
+      Eigen::Vector3f pos,angles;
+      for(int axis=0;axis<3;++axis) {
+        pos[axis]=object.pose[axis]+object.amplitudes[axis]*std::sin(2*pi*object.frequencies[axis]*t);
+        angles[axis]=float(object.pose[axis+3]+object.amplitudes[axis+3]*std::sin(2*pi*object.frequencies[axis+3]*t))*pi/180;
+      }
+      auto rotation=euler(angles[0],angles[1],angles[2]);
+      Eigen::Quaternionf q(rotation);q.normalize();
+      geometry_msgs::msg::Pose pose;
+      pose.position.x=pos.x();pose.position.y=pos.y();pose.position.z=pos.z();
+      pose.orientation.x=q.x();pose.orientation.y=q.y();pose.orientation.z=q.z();pose.orientation.w=q.w();
+      positions.push_back(pos);rotations.push_back(rotation);truth.poses.push_back(pose);
+    }
     auto render_eye=[&](int eye) {
       std::vector<uint16_t> image(size_t(width_)*height_,0);
       std::vector<float> depth(image.size(),std::numeric_limits<float>::infinity());
       for(size_t j=0;j<meshes_.size();++j) {
-        Eigen::Vector3f pos,angles;
-        for(int axis=0;axis<3;++axis) {
-          pos[axis]=poses_[6*j+axis]+amp_[axis]*std::sin(2*pi*freq_[axis]*t);
-          angles[axis]=float(poses_[6*j+axis+3]+amp_[axis+3]*std::sin(2*pi*freq_[axis+3]*t))*pi/180;
-        }
-        draw(meshes_[j],euler(angles[0],angles[1],angles[2]),pos,cameras_[eye],width_,height_,image,depth);
+        draw(meshes_[j],rotations[j],positions[j],cameras_[eye],width_,height_,image,depth);
       }
       std::copy(image.begin(),image.end(),pixels.begin()+eye*image.size());
     };
@@ -241,12 +258,13 @@ class SatelliteRenderer: public rclcpp::Node {
     auto raster_done=Clock::now();
     // Larger packets avoid hundreds of DDS publishes for every stereo pair.
     constexpr size_t chunk=32768; uint32_t count=(pixels.size()*2+chunk-1)/chunk;
-    auto stamp=now().nanoseconds();
+    truth_publisher_->publish(truth);
+    auto stamp_ns=stamp.nanoseconds();
     for(uint32_t part=0;part<count;++part) {
       std_msgs::msg::UInt8MultiArray msg; auto& b=msg.data;
       b.reserve(32+chunk); b.insert(b.end(),{'S','T','R','1'});
       put32(b,frame_);put32(b,part);put32(b,count);put32(b,width_);put32(b,height_);
-      put32(b,static_cast<uint32_t>(stamp/1000000000));put32(b,static_cast<uint32_t>(stamp%1000000000));
+      put32(b,static_cast<uint32_t>(stamp_ns/1000000000));put32(b,static_cast<uint32_t>(stamp_ns%1000000000));
       size_t begin=part*chunk,end=std::min(begin+chunk,pixels.size()*2);
       for(size_t i=begin;i<end;++i) b.push_back((pixels[i/2]>>(8*(i%2)))&255);
       auto due=next_send_;
@@ -261,9 +279,10 @@ class SatelliteRenderer: public rclcpp::Node {
   }
   int width_=0,height_=0,rate_=0;double fps_=0;uint32_t frame_=0;
   bool configured_=false,running_=false;
-  std::array<Camera,2> cameras_;std::vector<Mesh> meshes_;std::vector<double> poses_,amp_,freq_;
+  std::array<Camera,2> cameras_;std::vector<Mesh> meshes_;std::vector<sct::Object> objects_;
   Clock::time_point started_,next_send_;rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr publisher_;
+  rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr truth_publisher_;
   rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr ack_publisher_;
   rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr control_sub_;
 };

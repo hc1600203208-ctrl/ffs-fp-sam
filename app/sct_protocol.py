@@ -19,27 +19,23 @@ def command(kind, request_id, payload=b""):
     return HEADER.pack(b"SCT1", kind, 0, 0, request_id, len(payload)) + payload
 
 
-def configuration(width, height, fps, bytes_per_second, amplitudes, frequencies,
-                  calibration_path, objects):
+def configuration(width, height, fps, bytes_per_second, calibration_path, objects):
     if not (1 <= width <= 4096 and 1 <= height <= 4096 and
             0 < fps <= 1000 and math.isfinite(fps) and
             0 < bytes_per_second <= 0x7FFFFFFF and 1 <= len(objects) <= 32):
         raise ValueError("Invalid SCT1 rendering parameters")
-    if len(amplitudes) != 6 or len(frequencies) != 6:
-        raise ValueError("SCT1 requires six amplitudes and six frequencies")
-    values = [*amplitudes, *frequencies]
-    if not all(math.isfinite(value) for value in values):
-        raise ValueError("SCT1 motion values must be finite")
+    # Version 1 stores motion with each object. Version 0 used one shared motion block.
     payload = bytearray(struct.pack("<IIdIHH", width, height, fps, bytes_per_second,
-                                    len(objects), 0))
-    payload.extend(struct.pack("<12d", *values))
+                                    len(objects), 1))
     payload.extend(_text(calibration_path))
-    for name, mesh_path, pose in objects:
-        if len(pose) != 6 or not all(math.isfinite(value) for value in pose):
-            raise ValueError("Each SCT1 object needs six finite pose values")
+    for name, mesh_path, pose, amplitudes, frequencies in objects:
+        if (len(pose) != 6 or len(amplitudes) != 6 or len(frequencies) != 6 or
+                not all(math.isfinite(value) for value in (*pose, *amplitudes, *frequencies)) or
+                any(value < 0 for value in (*amplitudes, *frequencies))):
+            raise ValueError("Each SCT1 object needs six finite pose, amplitude and frequency values")
         payload.extend(_text(name))
         payload.extend(_text(mesh_path))
-        payload.extend(struct.pack("<6d", *pose))
+        payload.extend(struct.pack("<18d", *pose, *amplitudes, *frequencies))
     return bytes(payload)
 
 
