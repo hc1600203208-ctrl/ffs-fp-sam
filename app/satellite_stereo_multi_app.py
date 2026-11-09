@@ -265,8 +265,12 @@ class SatelliteWindow(MultiSimWindow):
         bottom.addLayout(model_column, 2)
         self.pose_table = QtWidgets.QTableWidget(0, 7)
         self.pose_table.setHorizontalHeaderLabels((
-            "Target", "Type", "XYZ (m)", "RPY °\n固定轴 XYZ / Rz·Ry·Rx", "q (x y z w)",
-            "|Δt| (m)", "ΔR (°)"))
+            "Target", "Type", "XYZ (m)", "RPY ° / 误差÷10°\n固定轴 XYZ / Rz·Ry·Rx", "q (x y z w)",
+            "|Δt| (m)", "ΔR÷10°"))
+        self.pose_table.horizontalHeaderItem(3).setToolTip(
+            "估计和真值行单位为度；误差行是原始角度差除以 10° 后的无量纲数值")
+        self.pose_table.horizontalHeaderItem(6).setToolTip(
+            "ΔR 误差除以 10° 后的无量纲数值；10° 对应 1")
         self.pose_table.verticalHeader().setVisible(False)
         self.pose_table.setMinimumHeight(210)
         for column, width in enumerate((95, 60, 165, 155, 205, 90, 85)):
@@ -411,14 +415,22 @@ class SatelliteWindow(MultiSimWindow):
                 for column, value in enumerate(format_pose(shown_truth), 2):
                     self.pose_table.item(table_row + 1, column).setText(value)
             if estimate and truth:
-                delta_xyz, delta_rpy, delta_t, delta_r = format_error(estimate[1], truth)
+                raw_error = pose_error(estimate[1], truth)
+                delta_xyz, delta_rpy, delta_t, delta_r = format_error(raw_error)
                 self.pose_table.item(table_row + 2, 2).setText(delta_xyz)
-                self.pose_table.item(table_row + 2, 3).setText(delta_rpy)
+                rpy_item = self.pose_table.item(table_row + 2, 3)
+                rpy_item.setText(delta_rpy)
+                rpy_item.setToolTip("原始 RPY 误差 (°): " +
+                                    "  ".join(f"{value:+.2f}" for value in raw_error[1]))
                 self.pose_table.item(table_row + 2, 5).setText(delta_t)
-                self.pose_table.item(table_row + 2, 6).setText(delta_r)
+                rotation_item = self.pose_table.item(table_row + 2, 6)
+                rotation_item.setText(delta_r)
+                rotation_item.setToolTip(f"原始 ΔR 误差: {raw_error[3]:.2f}°")
             else:
                 for column in (2, 3, 5, 6):
-                    self.pose_table.item(table_row + 2, column).setText("—")
+                    item = self.pose_table.item(table_row + 2, column)
+                    item.setText("—")
+                    item.setToolTip("")
         names = [self.mesh_selector.itemText(index) for index in range(self.mesh_selector.count())]
         masks = [frames.get(f"mask:{name}") for name in names]
         self.mask_legend.setText("   ".join(
@@ -593,15 +605,25 @@ def format_pose(values):
             "  ".join(f"{value:.3f}" for value in quaternion))
 
 
-def format_error(estimate, truth):
+def pose_error(estimate, truth):
     delta = tuple(a - b for a, b in zip(estimate[0], truth[0]))
     delta_rpy = tuple((a - b + 180.0) % 360.0 - 180.0
                       for a, b in zip(estimate[1], truth[1]))
     dot = abs(sum(a * b for a, b in zip(estimate[2], truth[2])))
     angle = math.degrees(2 * math.acos(min(1.0, max(0.0, dot))))
+    return delta, delta_rpy, math.sqrt(sum(value * value for value in delta)), angle
+
+
+def scale_angle_error(degrees):
+    """Convert an angular error in degrees to a dimensionless 10-degree scale."""
+    return degrees / 10.0
+
+
+def format_error(error):
+    delta, delta_rpy, translation_error, rotation_error = error
     return ("  ".join(f"{value:+.3f}" for value in delta),
-            "  ".join(f"{value:+.2f}" for value in delta_rpy),
-            f"{math.sqrt(sum(value * value for value in delta)):.3f}", f"{angle:.2f}")
+            "  ".join(f"{scale_angle_error(value):+.3f}" for value in delta_rpy),
+            f"{translation_error:.3f}", f"{scale_angle_error(rotation_error):.3f}")
 
 
 def clear_layout(layout):

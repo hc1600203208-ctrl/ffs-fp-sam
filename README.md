@@ -143,7 +143,7 @@ source /home/hc/weizi/ffs+fp+sam/sam/ros2_install/setup.bash
 ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
 ```
 
-卫星端以配置中的物体顺序向 `/satellite/ground_truth` 发布 `geometry_msgs/PoseArray`，时间戳与 `/satellite/stereo_bytes` 中的双目帧相同。真值为原始 mesh 原点在左相机光学坐标系中的位姿；跟踪器的 `pose_frame_id` 若在 YAML 中自定义，比较误差前须确认它仍表示同一左相机坐标系。App 按图像时间戳匹配跟踪位姿和对应帧的真值；匹配成功时真值行标记 `Truth`，否则显示最新真值并标记 `Latest`。同帧误差为：`ΔXYZ = 跟踪平移 − 真值平移`；误差行的 `RPY` 是逐轴计算 `wrap₍₋₁₈₀°,₁₈₀°₎(估计角 − 真值角)`，避免跨越 ±180° 时产生约 360° 的假差值；`|Δt|` 为三维平移误差范数；`ΔR = 2·acos(|q估计·q真值|)`（弧度转度，四元数均归一化）是完整相对旋转的最短角度，范围为 0–180°，不等于三个 RPY 差值的和。未匹配到真值的跟踪帧，误差显示为 `—`。旋转同时显示四元数 `(x,y,z,w)` 和固定轴 **XYZ** 欧拉角，即 `R = Rz(yaw) · Ry(pitch) · Rx(roll)`。RPY 分量差在接近万向节锁时会受欧拉角表示影响，整体旋转误差以 `ΔR` 为准。
+卫星端以配置中的物体顺序向 `/satellite/ground_truth` 发布 `geometry_msgs/PoseArray`，时间戳与 `/satellite/stereo_bytes` 中的双目帧相同。真值为原始 mesh 原点在左相机光学坐标系中的位姿；跟踪器的 `pose_frame_id` 若在 YAML 中自定义，比较误差前须确认它仍表示同一左相机坐标系。App 按图像时间戳匹配跟踪位姿和对应帧的真值；匹配成功时真值行标记 `Truth`，否则显示最新真值并标记 `Latest`。同帧误差为：`ΔXYZ = 跟踪平移 − 真值平移`；原始 RPY 误差逐轴计算 `wrap₍₋₁₈₀°,₁₈₀°₎(估计角 − 真值角)`，避免跨越 ±180° 时产生约 360° 的假差值；`|Δt|` 为三维平移误差范数；原始 `ΔR = 2·acos(|q估计·q真值|)`（弧度转度，四元数均归一化）是完整相对旋转的最短角度，范围为 0–180°，不等于三个 RPY 差值的和。**界面误差行的 RPY 和 ΔR 均显示无量纲缩放值 `原始角度误差(°) ÷ 10°`**：0–10° 对应 0–1，负的 RPY 误差保留符号，大于 10° 时显示大于 1，不截断；鼠标悬停可查看原始角度。估计和真值行的 RPY 仍以度显示，位置误差仍以米显示。未匹配到真值的跟踪帧，误差显示为 `—`。旋转同时显示四元数 `(x,y,z,w)` 和固定轴 **XYZ** 欧拉角，即 `R = Rz(yaw) · Ry(pitch) · Rx(roll)`。RPY 分量差在接近万向节锁时会受欧拉角表示影响，整体旋转误差以原始 `ΔR` 为准。
 
 ## 自适应滤波参数与行为
 

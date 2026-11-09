@@ -32,8 +32,15 @@ class PreviewTest(unittest.TestCase):
             return ((0.0, 0.0, 0.0), (0.0, 0.0, yaw),
                     (0.0, 0.0, math.sin(half_angle), math.cos(half_angle)))
 
-        self.assertEqual(app.format_error(values(-179), values(179)),
-                         ("+0.000  +0.000  +0.000", "+0.00  +0.00  +2.00", "0.000", "2.00"))
+        error = app.pose_error(values(-179), values(179))
+        self.assertAlmostEqual(error[1][2], 2.0)
+        self.assertAlmostEqual(error[3], 2.0)
+        self.assertEqual(app.format_error(error),
+                         ("+0.000  +0.000  +0.000", "+0.000  +0.000  +0.200", "0.000", "0.200"))
+
+    def test_angle_error_scale_is_linear_without_clipping(self):
+        self.assertEqual([app.scale_angle_error(value) for value in (0, 1, 5, 10, 15, -5)],
+                         [0, 0.1, 0.5, 1, 1.5, -0.5])
 
     def test_obj_preview_and_invalid_geometry(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -170,8 +177,8 @@ class MonitorIntegrationTest(unittest.TestCase):
                 self.assertEqual(window.pose_table.item(1, 2).text(), "0.000  0.000  1.000")
                 self.assertEqual(window.pose_table.item(1, 1).text(), "Truth")
                 self.assertEqual(window.pose_table.item(2, 5).text(), "0.250")
-                self.assertEqual(window.pose_table.item(2, 6).text(), "0.00")
-                self.assertEqual(window.pose_table.item(2, 3).text(), "+0.00  +0.00  +0.00")
+                self.assertEqual(window.pose_table.item(2, 6).text(), "0.000")
+                self.assertEqual(window.pose_table.item(2, 3).text(), "+0.000  +0.000  +0.000")
                 self.assertEqual(window.pose_table.item(0, 4).text(), "0.000  0.000  0.000  1.000")
                 self.assertNotEqual(window.motion_table.cellWidget(0, 1), window.motion_table.cellWidget(1, 1))
                 window.motion_table.cellWidget(0, 1).setValue(0.7)
