@@ -145,6 +145,38 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
 
 卫星端以配置中的物体顺序向 `/satellite/ground_truth` 发布 `geometry_msgs/PoseArray`，时间戳与 `/satellite/stereo_bytes` 中的双目帧相同。真值为原始 mesh 原点在左相机光学坐标系中的位姿；跟踪器的 `pose_frame_id` 若在 YAML 中自定义，比较误差前须确认它仍表示同一左相机坐标系。App 按图像时间戳匹配跟踪位姿和对应帧的真值；匹配成功时真值行标记 `Truth`，否则显示最新真值并标记 `Latest`。同帧误差为：`ΔXYZ = 跟踪平移 − 真值平移`；原始 RPY 误差逐轴计算 `wrap₍₋₁₈₀°,₁₈₀°₎(估计角 − 真值角)`，避免跨越 ±180° 时产生约 360° 的假差值；`|Δt|` 为三维平移误差范数；原始 `ΔR = 2·acos(|q估计·q真值|)`（弧度转度，四元数均归一化）是完整相对旋转的最短角度，范围为 0–180°，不等于三个 RPY 差值的和。**界面误差行的 RPY 和 ΔR 均显示无量纲缩放值 `原始角度误差(°) ÷ 10°`**：0–10° 对应 0–1，负的 RPY 误差保留符号，大于 10° 时显示大于 1，不截断；鼠标悬停可查看原始角度。估计和真值行的 RPY 仍以度显示，位置误差仍以米显示。未匹配到真值的跟踪帧，误差显示为 `—`。旋转同时显示四元数 `(x,y,z,w)` 和固定轴 **XYZ** 欧拉角，即 `R = Rz(yaw) · Ry(pitch) · Rx(roll)`。RPY 分量差在接近万向节锁时会受欧拉角表示影响，整体旋转误差以原始 `ΔR` 为准。
 
+### 无 ROS 双机 UDP 版本
+
+`standalone_udp/` 新增卫星 C++ 渲染器、地面 C++ 多目标跟踪器和 PyQt App，不替换上面的 ROS 节点。卫星端只依赖 POSIX 网络、Eigen（编译期）、libpng、zlib 和 C++ 运行库；没有 GPU 推理。地面端保留 FFS、GroundingDINO + SAM、FoundationPose TensorRT 推理及自适应 SE(3) 滤波，但进程不链接 ROS 库。地面 YAML 仍沿用已有 `ros__parameters` 格式，以便复用模型、网格和标定配置。
+
+星地两机用网线直连时，可将地面网口设为 `192.168.50.1/24`、卫星网口设为 `192.168.50.2/24`，确认互相 `ping` 且防火墙允许两端 UDP 50000。卫星端监听 UDP 50000；App 用该端口控制卫星并接收双目 PNG 与同帧真值。地面 App 到跟踪器的双目输入只走 `127.0.0.1:50100`，跟踪结果回到 `127.0.0.1:50101`。SUD1 协议对大消息分片并校验 CRC32，缺片时跳过该帧；控制命令有 ACK、重试和请求去重。App 与卫星启动后即可显示左图和真值；启动跟踪器并完成注册后才显示合成图、掩码、估计位姿和同帧误差。每个物体的运动参数可单独调整，角误差显示约定与上面的 ROS App 相同。
+
+在可联网的 x86_64 构建机上使用 Docker 制作 **Ubuntu 20.04 x86_64 卫星离线包**。脚本在 Ubuntu 20.04 容器内编译，并按所选 YAML 收集可执行文件、所有 `ldd` 运行时库、动态加载器、标定、每个目标的 OBJ/MTL/纹理、许可证与 SHA256 清单：
+
+```bash
+./standalone_udp/scripts/build_satellite_ubuntu20.sh \
+  ./fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_multi_bluegold_example.yaml
+```
+
+生成的 `standalone_udp/dist/satellite_udp_ubuntu20_x86_64.tar.gz` 被 Git 忽略。用 U 盘或内网拷至卫星主机，然后：
+
+```bash
+tar -xzf satellite_udp_ubuntu20_x86_64.tar.gz
+cd satellite_udp_ubuntu20_x86_64
+sha256sum -c SHA256SUMS
+./run_satellite.sh 50000
+```
+
+地面需要与其 GPU 匹配的驱动、CUDA、TensorRT、OpenCV、Eigen3、Assimp、yaml-cpp，以及 Python 3 的 PyQt5、NumPy、OpenCV 和 PyYAML。**地面 engine 不在卫星包中**；在目标地面 GPU 上按前文说明从官方模型重新转换，不能跨设备复用。复制示例 YAML 并将 engine、网格、标定、掩码目录改为地面主机路径，然后分别在地面终端运行：
+
+```bash
+./standalone_udp/scripts/build_ground.sh
+./standalone_udp/scripts/start_ground_tracker.sh /绝对路径/tracker.yaml
+./standalone_udp/scripts/start_ground_app.sh /绝对路径/tracker.yaml 192.168.50.2 50000
+```
+
+启动 App 时跟踪器可以暂时不运行。卫星程序、App、跟踪器已在本机以及 Ubuntu 20.04 容器桥接网络上完成两目标联调；离线包在无开发库的 Ubuntu 20.04 基础镜像中启动成功。真实两台主机的网口、防火墙、带宽与帧率仍需按目标设备验证。`standalone_udp/README.md` 在本地提供更详细的部署步骤；根据本仓库的 Git 忽略规则，非根目录 Markdown 文档不会进入提交。
+
 ## 自适应滤波参数与行为
 
 两个跟踪节点使用同一套 YAML 参数，默认值对齐 `run_demo_adaptive_filter.py` 的当前参数。`filter_fps` 为时间戳不可用时的回退帧率；正常运行时按相邻左图时间戳求 `dt`。`filter_q_pos/q_rot/q_vel/q_omega` 为 12 维状态预测噪声；`filter_sigma_pos_obs/sigma_rot_obs` 为观测标准差；`filter_sigma_pos_motion/sigma_rot_motion` 控制残差到质量分数的衰减；`filter_min_quality` 限制质量下界；`filter_gate_threshold` 是马氏距离平方门限；`filter_reject_cov_increase` 是拒绝观测时增加的协方差。`filter_enable_gating` 与 `filter_enable_adaptive_R` 可分别关闭门控和质量驱动的观测噪声调整。
