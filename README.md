@@ -1,6 +1,6 @@
 # 双目深度与多目标 6D 位姿跟踪部署
 
-本仓库把 Fast-FoundationStereo（FFS）、GroundingDINO + Segment Anything（SAM）、FoundationPose 的 C++/TensorRT 推理接成 ROS 2 双目跟踪流程，并提供仿真双目渲染及应用程序。输入左右相机图像、相机标定、目标网格和首帧掩码，连续输出每个物体相对于左相机的 6D 位姿。
+本仓库把 Fast-FoundationStereo（FFS）、GroundingDINO + Segment Anything（SAM）、FoundationPose 的 C++/TensorRT 推理接成 ROS 2 双目跟踪流程，并提供仿真双目渲染及应用程序。输入左右相机图像、相机标定、目标网格和首帧掩码，连续输出每个物体相对于左相机的 6D 位姿。另有[无 ROS 双机 UDP 版本](#无-ros-双机-udp-版本接口打包与操作)，用于把轻依赖渲染器部署到独立卫星 Linux 主机。
 
 ## 实验视频
 
@@ -145,37 +145,187 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
 
 卫星端以配置中的物体顺序向 `/satellite/ground_truth` 发布 `geometry_msgs/PoseArray`，时间戳与 `/satellite/stereo_bytes` 中的双目帧相同。真值为原始 mesh 原点在左相机光学坐标系中的位姿；跟踪器的 `pose_frame_id` 若在 YAML 中自定义，比较误差前须确认它仍表示同一左相机坐标系。App 按图像时间戳匹配跟踪位姿和对应帧的真值；匹配成功时真值行标记 `Truth`，否则显示最新真值并标记 `Latest`。同帧误差为：`ΔXYZ = 跟踪平移 − 真值平移`；原始 RPY 误差逐轴计算 `wrap₍₋₁₈₀°,₁₈₀°₎(估计角 − 真值角)`，避免跨越 ±180° 时产生约 360° 的假差值；`|Δt|` 为三维平移误差范数；原始 `ΔR = 2·acos(|q估计·q真值|)`（弧度转度，四元数均归一化）是完整相对旋转的最短角度，范围为 0–180°，不等于三个 RPY 差值的和。**界面误差行的 RPY 和 ΔR 均显示无量纲缩放值 `原始角度误差(°) ÷ 10°`**：0–10° 对应 0–1，负的 RPY 误差保留符号，大于 10° 时显示大于 1，不截断；鼠标悬停可查看原始角度。估计和真值行的 RPY 仍以度显示，位置误差仍以米显示。未匹配到真值的跟踪帧，误差显示为 `—`。旋转同时显示四元数 `(x,y,z,w)` 和固定轴 **XYZ** 欧拉角，即 `R = Rz(yaw) · Ry(pitch) · Rx(roll)`。RPY 分量差在接近万向节锁时会受欧拉角表示影响，整体旋转误差以原始 `ΔR` 为准。
 
-### 无 ROS 双机 UDP 版本
+## 无 ROS 双机 UDP 版本：接口、打包与操作
 
-`standalone_udp/` 新增卫星 C++ 渲染器、地面 C++ 多目标跟踪器和 PyQt App，不替换上面的 ROS 节点。卫星端只依赖 POSIX 网络、Eigen（编译期）、libpng、zlib 和 C++ 运行库；没有 GPU 推理。地面端保留 FFS、GroundingDINO + SAM、FoundationPose TensorRT 推理及自适应 SE(3) 滤波，但进程不链接 ROS 库。地面 YAML 仍沿用已有 `ros__parameters` 格式，以便复用模型、网格和标定配置。
+这一版本的代码集中在 `standalone_udp/`，现有 ROS 节点和启动文件仍可照常使用。卫星 Linux 主机运行 `satellite_renderer_udp`，负责按物体网格与运动参数生成左右图、回传真值；地面 Linux 主机运行 `satellite_stereo_multi_udp_app.py` 和 `ground_tracker_udp`。地面跟踪器继续使用 FFS 深度、GroundingDINO + SAM 首帧掩码、FoundationPose 和自适应 SE(3) 位姿滤波，运行时不需要 ROS。星上程序不运行神经网络，只使用 POSIX UDP、C++、libpng、zlib；Eigen 仅在编译时使用。
 
-星地两机用网线直连时，可将地面网口设为 `192.168.50.1/24`、卫星网口设为 `192.168.50.2/24`，确认互相 `ping` 且防火墙允许两端 UDP 50000。卫星端监听 UDP 50000；App 用该端口控制卫星并接收双目 PNG 与同帧真值。地面 App 到跟踪器的双目输入只走 `127.0.0.1:50100`，跟踪结果回到 `127.0.0.1:50101`。SUD1 协议对大消息分片并校验 CRC32，缺片时跳过该帧；控制命令有 ACK、重试和请求去重。App 与卫星启动后即可显示左图和真值；启动跟踪器并完成注册后才显示合成图、掩码、估计位姿和同帧误差。每个物体的运动参数可单独调整，角误差显示约定与上面的 ROS App 相同。
+### 星地进程与端口
 
-在可联网的 x86_64 构建机上使用 Docker 制作 **Ubuntu 20.04 x86_64 卫星离线包**。脚本在 Ubuntu 20.04 容器内编译，并按所选 YAML 收集可执行文件、所有 `ldd` 运行时库、动态加载器、标定、每个目标的 OBJ/MTL/纹理、许可证与 SHA256 清单：
+以下以网线直连、地面 IP `192.168.50.1`、卫星 IP `192.168.50.2` 为例。两台主机可以同时使用端口 50000，因为它们的 IP 不同。
+
+| 发送端 → 接收端 | 地址和端口 | 数据 | 说明 |
+| --- | --- | --- | --- |
+| 地面 App → 卫星渲染器 | `192.168.50.2:50000/UDP` | 配置、启动、停止命令 | App 的发送套接字同时绑定地面 `0.0.0.0:50000`；卫星通过该命令的来源地址确定回传目的地。 |
+| 卫星渲染器 → 地面 App | `192.168.50.1:50000/UDP` | 命令 ACK、双目 PNG、同帧渲染真值 | 卫星监听 `0.0.0.0:50000`。启动渲染前，App 必须至少发送过一次成功的控制命令。 |
+| 地面 App → 地面跟踪器 | `127.0.0.1:50100/UDP` | 填充背景后重新编码的双目 PNG | 只在地面主机内部传输；跟踪器未启动时，App 仍可显示卫星左图和真值。 |
+| 地面跟踪器 → 地面 App | `127.0.0.1:50101/UDP` | 滤波后的位姿、JPEG 合成图、PNG 掩码 | 本机环回接口，不需要在卫星侧开放 50100/50101。 |
+
+默认端口由 [App](standalone_udp/app/satellite_stereo_multi_udp_app.py) 和两个启动脚本确定。卫星端口可同时修改 `./run_satellite.sh` 与 `start_ground_app.sh` 的最后一个参数；地面 50100/50101 目前在 App 中固定，按下文默认值运行。卫星和 App 的 IP 不必与示例一致，但必须处于可互通的网络中。帧时间戳由卫星生成，并原样传递给跟踪器与 App；同帧匹配不依赖两台主机预先校时。
+
+### UDP 数据接口
+
+星地消息与地面本机消息均使用 `SUD1` 外层格式。所有多字节整数为**小端序**，位姿浮点数为 IEEE 754 `float64`。每个 UDP 数据报由 32 字节头部加最多 1152 字节数据组成，单个完整消息上限为 8 MiB。
+
+| 头部偏移（字节） | 长度 | 字段 | 含义 |
+| --- | ---: | --- | --- |
+| 0–3 | 4 | `magic` | ASCII `SUD1` |
+| 4 | 1 | `version` | 当前为 `1` |
+| 5 | 1 | `kind` | 下表中的消息类型 |
+| 6–7 | 2 | `reserved` | 当前为 `0` |
+| 8–11 | 4 | `message_id` | 控制/ACK 为请求号，图像/真值/结果为帧号；每次重新启动渲染，帧号从 0 开始 |
+| 12–13 | 2 | `part_index` | 分片编号，从 0 开始 |
+| 14–15 | 2 | `part_count` | 本消息的分片总数 |
+| 16–19 | 4 | `total_size` | 重组后的数据字节数 |
+| 20–27 | 8 | `stamp_ns` | 图像、真值及跟踪结果共用的 Unix 时间戳，单位纳秒；控制与 ACK 为 0 |
+| 28–31 | 4 | `chunk_crc32` | 本分片数据的 CRC32，不包含头部 |
+
+| `kind` | 方向 | 重组后的数据 |
+| ---: | --- | --- |
+| 1 `CONTROL` | App → 卫星 | 下述 `SCT1` 控制报文 |
+| 2 `ACK` | 卫星 → App | `SCT1` 应答报文 |
+| 3 `STEREO_PNG` | 卫星 → App；App → 地面跟踪器 | 单张 PNG：左图在左、右图在右。当前 App 下发的渲染尺寸固定为每眼 **640×480**，因此整张 PNG 解码后为 1280×480。卫星传来的是黑底渲染图；App 将黑色背景像素替换为仓库的 `app/assets/stereo_background.png` 后，再转发给跟踪器。 |
+| 4 `TRUTH` | 卫星 → App | `uint16` 物体数，随后按配置顺序为每个物体发送 7 个 `float64`：`x,y,z,qx,qy,qz,qw`。平移单位为米，位姿表示原始 mesh 原点相对于左相机光学坐标系。 |
+| 5 `RESULT` | 地面跟踪器 → App | `uint16` 物体数；每物体依次为 `uint16` 名称字节数、UTF-8 名称、`uint8` 有效标志、7 个 `float64` 位姿；随后为 `uint32` 合成图字节数、JPEG 数据、`uint16` 掩码数；每个掩码为 `uint32` 字节数加 PNG 数据，长度 0 表示尚无掩码。合成图从左到右为左图、位姿框、伪彩深度。 |
+
+`CONTROL` 内层 `SCT1` 头部依次为：4 字节 `SCT1`、1 字节命令类型、1 字节标志（0）、2 字节保留值（0）、4 字节请求号、4 字节数据长度。命令类型 `1` 为配置、`2` 为启动、`3` 为停止。配置数据从 `width:uint32, height:uint32, fps:float64, bytes_per_second:uint32, object_count:uint16, config_version:uint16` 开始；当前 App 发送 `config_version=1`。其后是以 `uint16` 长度加 UTF-8 字节表示的包内相对标定路径，再按物体顺序发送名称、包内相对 OBJ 路径，以及各 6 个 `float64` 的初始 `XYZRPY`、运动振幅、频率。位置与振幅的 XYZ 单位为米，RPY 单位为度，频率单位为 Hz。卫星逐轴按 `初值 + 振幅 × sin(2π × 频率 × 运行时间)` 生成运动，欧拉角按 `Rz(yaw) Ry(pitch) Rx(roll)` 组成旋转。
+
+`ACK` 的内层命令类型为 `0x80`，随后是 `status:uint8`（0 成功、1 失败）、`text_length:uint16` 和 UTF-8 提示文本。App 点击“Configure and start satellite”后依次发送**停止 → 配置 → 启动**，每一步收到成功 ACK 才继续；3 秒未应答会重发一次，之后再超时 3 秒则弹窗。卫星按来源地址、端口和请求号缓存 ACK，重复命令不会再次重启渲染。图像分片不重传：接收端校验 CRC32 并在 3 秒内重组，缺片时丢弃该帧，继续接收后续帧。可用“Link MB/s”限制卫星发包速率，但它不是可靠传输或自动拥塞控制。
+
+### 准备配置、模型与网格
+
+下面的示例 YAML 含开发机绝对路径，部署前先复制并修改。**同一个配置文件**用于星上包生成、地面跟踪器和 App；后两者每次启动时读取它。当前打包脚本将构建机的 `/home` 只读挂载进 Docker 容器，所以仓库、配置文件、网格和标定都应位于 `/home` 下。以下命令在仓库根目录执行：
 
 ```bash
-./standalone_udp/scripts/build_satellite_ubuntu20.sh \
-  ./fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_multi_bluegold_example.yaml
+CONFIG="$HOME/tracker_udp.yaml"
+cp fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_multi_bluegold_example.yaml "$CONFIG"
+nano "$CONFIG"
 ```
 
-生成的 `standalone_udp/dist/satellite_udp_ubuntu20_x86_64.tar.gz` 被 Git 忽略。用 U 盘或内网拷至卫星主机，然后：
+修改时核对以下字段；两个列表中的物体**顺序必须一致**：
+
+| YAML 位置 | 需要填写的内容 |
+| --- | --- |
+| `foundationpose_stereo_tracker_multi_node.ros__parameters.stereo_engine_file_path` | 地面 GPU 上的 FFS feature/post engine，按此顺序填写 |
+| 同节 `refiner_engine_path`、`scorer_engine_path` | 地面 GPU 上的 FoundationPose engine |
+| 同节 `caminfo_path`、`fx/fy/cx/cy` | 与双目图对应的标定文件和左相机内参；打包器把 `caminfo_path` 复制为卫星包内 `assets/calibration.txt` |
+| 同节 `tracked_object_names`、`tracked_mesh_paths`、`tracked_mask_image_names` | 每个目标的名称、地面 OBJ 绝对路径和首帧掩码文件名；`mask_image_directory` 要指向可写目录 |
+| `grounded_sam_multi_first_mask_node.ros__parameters.dino_engines` | 按目标顺序填写每个目标的 DINO engine |
+| 同节 `sam_encoder_engine`、`sam_decoder_engine` | 地面 SAM engine 路径 |
+
+打包器按 `tracked_mesh_paths` 的顺序复制**每个 OBJ 所在的整个目录**：第一项放到 `assets/meshes/0/`，第二项放到 `assets/meshes/1/`，以此类推，包括该目录内的 MTL、纹理与辅助文件。App 会用 `meshes/<从0开始的序号>/<OBJ文件名>` 配置卫星端。例如两目标示例的首项在卫星上是 `assets/meshes/0/textured_mesh.obj`。改动目标数量、顺序、OBJ、纹理或标定后，重新打包并重启相关进程。卫星包只含渲染所需的网格与标定；FFS、FP、DINO、SAM engine 在地面主机使用，须按前文说明在该 GPU 上由官方模型转换。
+
+卫星渲染器读取 OBJ 的顶点、纹理坐标和面，并从 MTL 的 `map_Kd` 加载 PNG 纹理；复杂材质、其他网格格式及 JPG 纹理应先转成这一格式。网格尺寸应以米为单位，并与地面 FoundationPose 使用的同一目标网格保持一致。标定文本沿用 [`ffs/64091.txt`](ffs/64091.txt) 的布局，包含左右相机内参、各 5 个畸变系数、双目旋转和平移及米制基线；地面深度还会读取这份标定，因此不能只修改其中一侧。
+
+### 制作并传输 Ubuntu 20.04 卫星离线包
+
+在**可联网的 x86_64 构建机**上安装 Docker 并确认 `docker` 命令可运行，然后执行。构建镜像时需要网络安装 Ubuntu 20.04 的编译依赖；目标卫星主机不需要联网。`CONFIG` 必须是 `/home` 下的**绝对路径**，不要把相对路径传给打包脚本。
 
 ```bash
-tar -xzf satellite_udp_ubuntu20_x86_64.tar.gz
-cd satellite_udp_ubuntu20_x86_64
+./standalone_udp/scripts/build_satellite_ubuntu20.sh "$CONFIG"
+tar -tzf standalone_udp/dist/satellite_udp_ubuntu20_x86_64.tar.gz | head -n 30
+sha256sum standalone_udp/dist/satellite_udp_ubuntu20_x86_64.tar.gz
+```
+
+归档目录 `satellite_udp_ubuntu20_x86_64/` 含 `bin/satellite_renderer_udp`、`lib/` 内的动态加载器及 `ldd` 查到的运行库、`assets/calibration.txt`、`assets/meshes/<序号>/`、`licenses/`、`run_satellite.sh`、`MANIFEST.json` 和 `SHA256SUMS`。这是面向 **Ubuntu 20.04、x86_64** 的包，不要把当前 x86_64 包直接拿到 ARM/Jetson 上运行。归档文件被 Git 忽略，不会随源码推送。若卫星已开启 SSH，先按下节配置网口，再通过直连网线复制；也可使用 U 盘。以下 `satellite` 应替换为卫星主机的实际用户名：
+
+```bash
+scp standalone_udp/dist/satellite_udp_ubuntu20_x86_64.tar.gz satellite@192.168.50.2:~/
+```
+
+在卫星主机上，以接收归档的用户登录，执行：
+
+```bash
+tar -xzf ~/satellite_udp_ubuntu20_x86_64.tar.gz -C ~/
+cd ~/satellite_udp_ubuntu20_x86_64
 sha256sum -c SHA256SUMS
 ./run_satellite.sh 50000
 ```
 
-地面需要与其 GPU 匹配的驱动、CUDA、TensorRT、OpenCV、Eigen3、Assimp、yaml-cpp，以及 Python 3 的 PyQt5、NumPy、OpenCV 和 PyYAML。**地面 engine 不在卫星包中**；在目标地面 GPU 上按前文说明从官方模型重新转换，不能跨设备复用。复制示例 YAML 并将 engine、网格、标定、掩码目录改为地面主机路径，然后分别在地面终端运行：
+`sha256sum -c` 应全部显示 `OK`。启动脚本显式使用包内的 `ld-linux-x86-64.so.2` 和 `lib/`，所以不要只复制 `bin/` 下的单个可执行文件。程序输出 `Satellite UDP renderer listening on 50000` 后等待 App 控制；这时还不会自行发送图像。卫星端不需要 ROS、CUDA、TensorRT 或 Python 运行环境。首次在真实星上主机部署时，检查其系统与架构确为 Ubuntu 20.04 x86_64，并在目标机实际执行上述校验和启动命令。
+
+### 两台主机的网线配置
+
+先用 `ip -br link` 查出实际网卡名。以下 `enp1s0` 只是示例，命令需分别在对应主机执行并换成各自的真实网卡；`ip addr add` 设置在重启后不会自动保留，长期部署可改用各自系统的 Netplan 配置。
 
 ```bash
-./standalone_udp/scripts/build_ground.sh
-./standalone_udp/scripts/start_ground_tracker.sh /绝对路径/tracker.yaml
-./standalone_udp/scripts/start_ground_app.sh /绝对路径/tracker.yaml 192.168.50.2 50000
+# 地面主机
+GROUND_IF=enp1s0
+sudo ip link set "$GROUND_IF" up
+sudo ip addr add 192.168.50.1/24 dev "$GROUND_IF"
+
+# 卫星主机
+SAT_IF=enp1s0
+sudo ip link set "$SAT_IF" up
+sudo ip addr add 192.168.50.2/24 dev "$SAT_IF"
 ```
 
-启动 App 时跟踪器可以暂时不运行。卫星程序、App、跟踪器已在本机以及 Ubuntu 20.04 容器桥接网络上完成两目标联调；离线包在无开发库的 Ubuntu 20.04 基础镜像中启动成功。真实两台主机的网口、防火墙、带宽与帧率仍需按目标设备验证。`standalone_udp/README.md` 在本地提供更详细的部署步骤；根据本仓库的 Git 忽略规则，非根目录 Markdown 文档不会进入提交。
+地面执行 `ping 192.168.50.2`，卫星执行 `ping 192.168.50.1`。防火墙需允许卫星主机收到来自地面的 UDP 50000，也需允许地面主机收到来自卫星的 UDP 50000；本机的 50100/50101 只在地面环回接口使用。若用 `ufw` 且策略阻断入站流量，可分别加入针对对端 IP 的规则：
+
+```bash
+# 地面主机
+sudo ufw allow from 192.168.50.2 to any port 50000 proto udp
+# 卫星主机
+sudo ufw allow from 192.168.50.1 to any port 50000 proto udp
+```
+
+### 构建地面跟踪器与启动整套系统
+
+地面主机需要与其 GPU 匹配的驱动、CUDA、TensorRT、OpenCV、Eigen3、Assimp、yaml-cpp、libpng、zlib；App 需要系统 Python 3 的 PyQt5、NumPy、OpenCV 和 PyYAML。常见 Ubuntu 开发包可先安装如下，CUDA/TensorRT 仍需按对应设备单独安装。**这一套启动流程不需要 `source /opt/ros/...`，也不需要启动 ROS daemon。**
+
+```bash
+sudo apt install build-essential cmake libopencv-dev libeigen3-dev libassimp-dev \
+  libyaml-cpp-dev libpng-dev zlib1g-dev python3-pyqt5 python3-numpy \
+  python3-opencv python3-yaml
+cd '/home/hc/weizi/ffs+fp+sam'  # 换成地面主机上的仓库路径
+./standalone_udp/scripts/build_ground.sh
+```
+
+构建结果是 `standalone_udp/build/ground_tracker_udp`；脚本会检查其动态依赖中没有 ROS 库。部署时依次进行：
+
+1. **卫星终端：** 保持前述 `./run_satellite.sh 50000` 运行。
+2. **地面 App 终端：** 在仓库根目录执行下列命令，随后打开“Parameters and control”页设置参数，点击 **Configure and start satellite**。此时“Tracking monitor”页应开始显示左图和渲染真值。
+
+   ```bash
+   ./standalone_udp/scripts/start_ground_app.sh "$CONFIG" 192.168.50.2 50000
+   ```
+
+3. **地面跟踪终端：** 需要位姿结果时再运行跟踪器。它会在首帧生成掩码并执行注册；之后 App 显示估计位姿、合成图、掩码和同帧误差。
+
+   ```bash
+   ./standalone_udp/scripts/start_ground_tracker.sh "$CONFIG"
+   ```
+
+这里的 `CONFIG` 与打包时使用的文件一致；若在新终端中执行，先再次设置 `CONFIG="$HOME/tracker_udp.yaml"`。星上端口如改为其他值，应同时修改卫星启动命令和 App 启动命令的最后一个参数。App 关闭时释放地面 UDP 端口；停止渲染可先点 **Stop satellite**，再在各终端按 `Ctrl+C`。只改运动参数时，可再次点击 **Configure and start satellite**；地面跟踪器看到帧号从 0 重新开始后会重置目标注册。修改 YAML 中的模型、目标或标定时，请停止相关进程后重启；卫星资源变化还需重新打包。
+
+### App 界面与参数设置
+
+App 有两个页签，启动时通过 `--config` 读取目标名称与网格列表。默认示例的参数会显示在控件中，可逐目标修改。
+
+| “Parameters and control”区域 | 设置方式与作用 |
+| --- | --- |
+| `Satellite IP` | 卫星主机网口 IP，初始值来自启动命令；必须能从地面主机访问。 |
+| `Calibration in satellite bundle` | **相对于卫星包 `assets/` 的路径**，默认 `calibration.txt`；不要填地面 YAML 的绝对路径。 |
+| `FPS` | 卫星渲染目标帧率，界面允许 0.1–60，默认 8。首次联调可先设为 1，再按链路和计算能力提高。 |
+| `Link MB/s` | 卫星 UDP 发包速率上限，按十进制 `1 MB = 1,000,000 字节` 换算，界面允许 0.1–1000，默认 10。该值要结合实际网线速率和帧大小调整。 |
+| `Initial poses` 表 | 每行一个物体；`X/Y/Z` 为米、`Roll/Pitch/Yaw` 为度，表示物体原始 mesh 原点在左相机光学坐标系中的初始位姿。行顺序来自 YAML 的 `tracked_object_names`。 |
+| `Ground mesh` 列 | 从 YAML 的 `tracked_mesh_paths` 读入。App 取该列的**文件名**来拼接卫星路径 `meshes/<行号从0开始>/<文件名>`；地面跟踪器仍从启动时的 YAML 绝对路径加载网格。要换目标，应同步修改 YAML 并重新打包，不能只改此单元格。 |
+| `Independent motion` 表 | 各目标分别设置 `Amp XYZRPY` 和 `Freq XYZRPY`。XYZ 振幅单位为米，RPY 振幅单位为度，六个频率均为 Hz；振幅或频率设为 0 可使对应轴保持初值。 |
+| `Configure and start satellite`、`Stop satellite` | 前者依次停止、配置、启动卫星并显示 ACK 状态；后者只停止渲染，卫星进程继续监听控制命令。 |
+
+| “Tracking monitor”区域 | 显示内容 |
+| --- | --- |
+| `Satellite left image` | 收到卫星双目 PNG 后显示左眼图；App 会把渲染图的黑色背景替换为本地背景图片。无需启动地面跟踪器。 |
+| `Tracker: left \| pose \| depth` | 跟踪器回传的三联图：填充背景后的左图、跟踪位姿框、伪彩深度。 |
+| `First-frame masks` | 按目标着色的首帧掩码；目标尚未检测到时对应区域为空。 |
+| 位姿表 | 每个目标有 `Estimate`、`Truth/Latest`、`Error` 三行。估计值是滤波后的 XYZ、ZYX 欧拉角和 `(qx,qy,qz,qw)`；真值行按同帧时间戳匹配，找不到同帧真值时显示最新值并标 `Latest`。只有同帧匹配成功才填写误差行；`Δt` 列是米制平移误差范数，`ΔR` 是两四元数的最短相对旋转角。 |
+
+角度误差的**显示值**沿用现有演示约定：RPY 误差与 `ΔR` 都是原始角度误差除以 10；估计/真值行的角度仍为原始度数，鼠标悬停误差单元格可看原始角度。这种缩放只改变界面数字，**不代表实际角度精度提高**。欧拉角转序明确为 `R = Rz(yaw) Ry(pitch) Rx(roll)`。改变网格、标定或目标顺序后，应同时更新包、地面 YAML 与 App 使用的 YAML，并重启跟踪器和 App。
+
+### 联调检查
+
+先确认卫星输出 `Satellite UDP renderer listening on 50000`，地面 `ping` 成功，App 点击启动后状态栏显示 `Satellite start: OK`。如果 App 提示 `Satellite timeout`，依次核对星地 IP、网卡、防火墙、两端 UDP 50000 和卫星进程日志。可用 `ss -lun` 查看监听端口。若左图已显示而位姿未出现，查看地面跟踪器终端的 engine/网格/标定加载错误、DINO/SAM 首帧检测结果，以及是否监听 `127.0.0.1:50100`；确认 `mask_image_directory` 可写。丢帧明显时先将 App 的 FPS 降至 1，并核对 `Link MB/s` 与实际链路容量；SUD1 对缺片帧不会补传。
+
+本工程已完成本机和 Ubuntu 20.04 容器桥接网络的两目标联调、卫星包 SHA256 校验及无开发库基础镜像启动。**尚未在两台真实 Linux 主机之间实测**；最终部署仍需在目标卫星系统上核对 Ubuntu/架构、网卡、防火墙、带宽与实际帧率。
 
 ## 自适应滤波参数与行为
 
