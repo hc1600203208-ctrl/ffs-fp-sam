@@ -198,6 +198,13 @@ bool FoundationPose::Register(const cv::Mat     &rgb,
   package->depth_on_host = depth;
   package->mask_on_host  = mask;
   package->target_name   = target_name;
+  // Each target owns a rasterizer. Keeping the 252-pose registration cache
+  // allocated makes the next target's registration exceed smaller GPUs.
+  // Destroy this guard before package so both renderer streams finish first.
+  struct RasterCacheRelease {
+    FoundationPoseRenderer &renderer;
+    ~RasterCacheRelease() { renderer.ReleaseRasterCache(); }
+  } raster_cache_release{*map_name2renderer_.at(target_name)};
   // 将数据传输至device端，并生成xyz_map数据
   MESSURE_DURATION_AND_CHECK_STATE(UploadDataToDevice(rgb, depth, mask, package),
                                    "[FoundationPose] SyncDetect Failed to upload data!!!");

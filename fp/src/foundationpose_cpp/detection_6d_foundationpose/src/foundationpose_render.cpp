@@ -263,6 +263,14 @@ FoundationPoseRenderer::~FoundationPoseRenderer()
   }
 }
 
+void FoundationPoseRenderer::ReleaseRasterCache()
+{
+  // Also wait when registration exits early through an error path.
+  cudaStreamSynchronize(cuda_stream_transf_);
+  cudaStreamSynchronize(cuda_stream_render_);
+  cr_.reset();
+}
+
 bool FoundationPoseRenderer::PrepareBuffer()
 {
   // nvdiffrast render 用到的缓存以及渲染器
@@ -623,6 +631,10 @@ bool FoundationPoseRenderer::NvdiffrastRender(cudaStream_t                      
                                               nvcv::Tensor &flip_xyz_map_tensor)
 {
   size_t N = poses.size();
+  if (!cr_)
+  {
+    cr_ = std::make_shared<CR::CudaRaster>();
+  }
   CHECK_STATE(TransformVerticesOnCUDA(cuda_stream, poses, pts_cam_device_.get()),
               "[FoundationPoseRender] Failed transform mesh vertices points !!!");
 

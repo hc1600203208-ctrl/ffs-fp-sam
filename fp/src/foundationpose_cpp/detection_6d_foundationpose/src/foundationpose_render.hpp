@@ -36,6 +36,10 @@ public:
                           void                               *transf_buffer,
                           float                               crop_ratio);
 
+  // Registration rasterizes 252 poses. Release that temporary cache before
+  // registering another object; tracking recreates it for a single pose.
+  void ReleaseRasterCache();
+
   ~FoundationPoseRenderer();
 
 private:
