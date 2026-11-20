@@ -45,8 +45,10 @@ def pixmap(image):
 class Link(QtCore.QObject):
     ack = QtCore.pyqtSignal(int, int, str)
     image = QtCore.pyqtSignal(object)
-    truth = QtCore.pyqtSignal(int, object)
-    result = QtCore.pyqtSignal(int, object, object, object)
+    # Renderer timestamps are Unix nanoseconds (64-bit). PyQt's `int` signal
+    # converts them to 32-bit signed integers and breaks frame ordering.
+    truth = QtCore.pyqtSignal(object, object)
+    result = QtCore.pyqtSignal(object, object, object, object)
     fault = QtCore.pyqtSignal(str)
 
     def __init__(self, listen_port, tracker_port, result_port, background, disparity):
