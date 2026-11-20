@@ -5,6 +5,7 @@ import socket
 import struct
 import sys
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -56,6 +57,9 @@ class Link(QtCore.QObject):
         self.background = cv2.imread(str(background), cv2.IMREAD_COLOR) if background else None
         self.disparity = disparity
         self.stop_event = threading.Event()
+        self._inflight_lock = threading.Lock()
+        self._inflight = None
+        self._tracker_timeout_sec = 10.0
         self.satellite = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.satellite.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 16 * 1024 * 1024)
         self.satellite.bind(("0.0.0.0", listen_port))
@@ -98,6 +102,7 @@ class Link(QtCore.QObject):
 
     def _satellite_loop(self):
         reassembler = Reassembler()
+        next_expire = time.monotonic() + 1.0
         while not self.stop_event.is_set():
             try:
                 packet, peer = self.satellite.recvfrom(2048)
@@ -106,6 +111,9 @@ class Link(QtCore.QObject):
                 continue
             except OSError:
                 break
+            if time.monotonic() >= next_expire:
+                reassembler.expire()
+                next_expire = time.monotonic() + 1.0
             message = reassembler.push(packet, peer)
             if not message:
                 continue
@@ -126,15 +134,30 @@ class Link(QtCore.QObject):
                         raise ValueError("invalid stereo PNG")
                     stereo = self._composite(stereo)
                     self.image.emit(stereo[:, :stereo.shape[1] // 2].copy())
+                    now = time.monotonic()
+                    with self._inflight_lock:
+                        previous = self._inflight
+                        if previous is not None and now - previous[2] < self._tracker_timeout_sec:
+                            continue
+                        self._inflight = (frame_id, stamp_ns, now)
+                    if previous is not None:
+                        self.fault.emit("Tracker result timed out; forwarding the latest frame")
                     ok, png = cv2.imencode(".png", stereo)
                     if ok:
                         for outbound in encode(STEREO_PNG, frame_id, stamp_ns, png.tobytes()):
                             self.tracker.sendto(outbound, ("127.0.0.1", self.tracker_port))
-            except (ValueError, struct.error, OSError) as error:
+                    else:
+                        with self._inflight_lock:
+                            self._inflight = None
+            except (ValueError, struct.error, OSError, cv2.error) as error:
+                with self._inflight_lock:
+                    if self._inflight is not None and self._inflight[:2] == (frame_id, stamp_ns):
+                        self._inflight = None
                 self.fault.emit(str(error))
 
     def _tracker_loop(self):
         reassembler = Reassembler()
+        next_expire = time.monotonic() + 1.0
         while not self.stop_event.is_set():
             try:
                 packet, peer = self.tracker.recvfrom(2048)
@@ -143,11 +166,14 @@ class Link(QtCore.QObject):
                 continue
             except OSError:
                 break
+            if time.monotonic() >= next_expire:
+                reassembler.expire()
+                next_expire = time.monotonic() + 1.0
             message = reassembler.push(packet, peer)
             if not message or message[0] != RESULT:
                 continue
             try:
-                _, _, stamp, payload = message
+                _, frame_id, stamp, payload = message
                 at = 0
                 count = struct.unpack_from("<H", payload, at)[0]; at += 2
                 poses = {}
@@ -169,7 +195,10 @@ class Link(QtCore.QObject):
                                               cv2.IMREAD_GRAYSCALE) if length else None)
                     at += length
                 self.result.emit(stamp, poses, image, masks)
-            except (ValueError, struct.error, UnicodeDecodeError) as error:
+                with self._inflight_lock:
+                    if self._inflight is not None and self._inflight[:2] == (frame_id, stamp):
+                        self._inflight = None
+            except (ValueError, struct.error, UnicodeDecodeError, cv2.error) as error:
                 self.fault.emit(str(error))
 
 

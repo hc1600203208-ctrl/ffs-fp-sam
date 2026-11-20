@@ -168,10 +168,16 @@ class GroundTrackerUdp {
 
   void run() {
     std::uint8_t packet[udp_wire::header_size + udp_wire::chunk_size];
+    auto next_expire = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (true) {
       sockaddr_in from{}; socklen_t length = sizeof(from);
       auto n = recvfrom(fd_, packet, sizeof(packet), 0, reinterpret_cast<sockaddr*>(&from), &length);
       if (n <= 0) continue;
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= next_expire) {
+        reassembler_.expire();
+        next_expire = now + std::chrono::seconds(1);
+      }
       udp_wire::Message message{};
       if (!reassembler_.push(packet, n, from.sin_addr.s_addr, from.sin_port, &message) ||
           message.kind != udp_wire::stereo_png) continue;

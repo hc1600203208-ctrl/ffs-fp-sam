@@ -207,7 +207,10 @@ class SatelliteRendererUdp {
       if (running_ && Clock::now() >= next_frame_) {
         try { render(); }
         catch (const std::exception& e) { std::fprintf(stderr, "render error: %s\n", e.what()); running_ = false; }
-        next_frame_ = Clock::now() + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps_));
+        // Schedule from the previous target time so rendering work does not
+        // add an extra full frame interval to every frame.
+        next_frame_ += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / fps_));
+        if (next_frame_ < Clock::now()) next_frame_ = Clock::now();
       }
       reassembler_.expire();
     }
