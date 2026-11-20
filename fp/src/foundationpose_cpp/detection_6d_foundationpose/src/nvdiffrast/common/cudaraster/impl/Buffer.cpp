@@ -48,6 +48,9 @@ void Buffer::reset(size_t bytes)
         m_gpuPtr = NULL;
     }
 
+    // Keep the recorded capacity in sync if the following allocation fails.
+    m_bytes = 0;
+
     if (bytes > 0)
         NVDR_CHECK_CUDA_ERROR(cudaMalloc(&m_gpuPtr, bytes));
 
@@ -87,6 +90,8 @@ void HostBuffer::reset(size_t bytes)
         NVDR_CHECK_CUDA_ERROR(cudaFreeHost(m_hostPtr));
         m_hostPtr = NULL;
     }
+
+    m_bytes = 0;
 
     if (bytes > 0)
         NVDR_CHECK_CUDA_ERROR(cudaMallocHost(&m_hostPtr, bytes));

@@ -17,7 +17,18 @@
 
 #pragma once
 
+#include <cuda_runtime_api.h>
+#include <stdexcept>
+#include <string>
+
 //------------------------------------------------------------------------
 
 // PATCH for Isaac ROS FoundationPose
-#define NVDR_CHECK_CUDA_ERROR(CUDA_CALL) do { cudaError_t err = CUDA_CALL; } while(0)
+#define NVDR_CHECK_CUDA_ERROR(CUDA_CALL)                                             \
+    do {                                                                             \
+        const cudaError_t nvdr_error = (CUDA_CALL);                                  \
+        if (nvdr_error != cudaSuccess) {                                             \
+            throw std::runtime_error(std::string("nvdiffrast CUDA failure in ") +     \
+                                     #CUDA_CALL + ": " + cudaGetErrorString(nvdr_error)); \
+        }                                                                            \
+    } while (0)
