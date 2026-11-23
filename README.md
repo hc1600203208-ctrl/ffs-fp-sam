@@ -154,8 +154,8 @@ ros2 launch foundationpose_cpp foundationpose_stereo_tracker_multi.launch.py
 在可联网的 x86_64 构建机上使用 Docker 制作 **Ubuntu 20.04 x86_64 卫星离线包**。脚本在 Ubuntu 20.04 容器内编译，并按所选 YAML 收集可执行文件、所有 `ldd` 运行时库、动态加载器、标定、每个目标的 OBJ/MTL/纹理、许可证与 SHA256 清单：
 
 ```bash
-./standalone_udp/scripts/build_satellite_ubuntu20.sh \
-  ./fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_multi_bluegold_example.yaml
+CONFIG="$(pwd)/fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_multi_bluegold_example.yaml"
+./standalone_udp/scripts/build_satellite_ubuntu20.sh "$CONFIG"
 ```
 
 生成的 `standalone_udp/dist/satellite_udp_ubuntu20_x86_64.tar.gz` 被 Git 忽略。用 U 盘或内网拷至卫星主机，然后：
@@ -166,6 +166,25 @@ cd satellite_udp_ubuntu20_x86_64
 sha256sum -c SHA256SUMS
 ./run_satellite.sh 50000
 ```
+
+飞腾 D2000v 的 **openEuler 22.03 LTS SP3 aarch64** 卫星盒子使用单独的离线包。在可运行 Docker ARM64 模拟的联网 x86_64 构建机上执行下列命令；构建脚本使用官方 openEuler 22.03 LTS SP3 ARM64 镜像编译，并打包该镜像中的 ARM64 动态加载器和运行库：
+
+```bash
+CONFIG="$(pwd)/fp/src/foundationpose_cpp/config/foundationpose_stereo_tracker_multi_bluegold_example.yaml"
+./standalone_udp/scripts/build_satellite_openeuler22_sp3_aarch64.sh "$CONFIG"
+sha256sum standalone_udp/dist/satellite_udp_openeuler22sp3_aarch64.tar.gz
+```
+
+将 `standalone_udp/dist/satellite_udp_openeuler22sp3_aarch64.tar.gz` 复制到卫星盒子后，停止旧渲染进程，在盒子上确认 `uname -m` 为 `aarch64` 且 `/etc/os-release` 为 openEuler 22.03 LTS SP3，再执行：
+
+```bash
+tar -xzf satellite_udp_openeuler22sp3_aarch64.tar.gz
+cd satellite_udp_openeuler22sp3_aarch64
+sha256sum -c SHA256SUMS
+./run_satellite.sh 50000
+```
+
+卫星盒子无需 ROS、CUDA、TensorRT、Python 或联网安装开发库；仍需配置能与地面主机互通的网口，并允许双向 UDP 50000。包内 `DEPLOY.txt` 也列出了检查步骤。该 ARM64 包已在无编译工具的官方 openEuler 基础容器中通过启动、UDP 配置与启动应答、双目 PNG 和同帧双目标真值测试；真实飞腾盒子的运行帧率仍需在设备上实测。目标数量、网格顺序或标定变更后，应以对应地面 YAML 重新打包。
 
 地面需要与其 GPU 匹配的驱动、CUDA、TensorRT、OpenCV、Eigen3、Assimp、yaml-cpp，以及 Python 3 的 PyQt5、NumPy、OpenCV 和 PyYAML。**地面 engine 不在卫星包中**；在目标地面 GPU 上按前文说明从官方模型重新转换，不能跨设备复用。复制示例 YAML 并将 engine、网格、标定、掩码目录改为地面主机路径，然后分别在地面终端运行：
 
